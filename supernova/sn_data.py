@@ -1,3 +1,3 @@
 from .supernova import SN
 
-lao = SN.from_csv("./supernova/SNClass_20lao/")
+lao = SN.from_csv("./sndata/SNClass_20lao/")
