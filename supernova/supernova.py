@@ -113,7 +113,7 @@ class SN:
         
     
     
-    def to_csv(self, basepath: Union[str, Path] = Path('./')):
+    def to_csv(self, basepath: Union[str, Path] = Path('../')):
         basepath = Path(basepath).joinpath(Path(f"SNClass_{self.name}/"))
         
         os.makedirs(basepath, exist_ok=True)
@@ -149,5 +149,3 @@ class SN:
             name=fields['sninfo'].name if 'name' in fields['sninfo'].index else 'unknown',
             sub_only=fields['sninfo'].sub_only if 'name' in fields['sninfo'].index else False
            )
-                
-lao = SN.from_csv("./supernova/SNClass_20lao/")
