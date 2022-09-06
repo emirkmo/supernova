@@ -22,7 +22,7 @@ class SNInterp:
         #modrange = np.linspace(pep.tess_patrick, simple.time.max(), 200)
         for filt,filtname in self.filters_dict.items():
             s = self.sn.band(filtname)
-            lc = LCinterp(self.reference_times,
+            lc = LCInterp(self.reference_times,
                           s.jd.values,
                           s.mag.values-self.sn.distance-self.sn.sninfo[filt+'ext'],
                           s.mag_err.values,
@@ -33,8 +33,6 @@ class SNInterp:
             interps[filt] = lc
         
         
-        
-
 
 class LCInterp:
     

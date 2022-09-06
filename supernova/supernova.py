@@ -1,15 +1,17 @@
 import pandas as pd
 from dataclasses import dataclass, field, fields, asdict
-from typing import Dict, Union
+from typing import Dict, Union, Optional, TypeVar
 import astropy.units as u
 from pathlib import Path
 import os
 import numpy as np
 
+from supernova.filters import Filter, FilterSorter
+
 sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT'}
 site_markers = {1: 's', 5: 'd', 8: 'v'}
 site_err_scales = {1: 2, 5: 2, 8: 5}
-
+Site = TypeVar('Site', int, str)
 
 @dataclass
 class MagPhot:
@@ -21,18 +23,21 @@ class MagPhot:
     phase: pd.Series = None
     sub: pd.Series = None
     site: pd.Series = None
-    
+
     def __post_init__(self):
+        self.redefine_filters()
+
+    def redefine_filters(self):
         self.filter = self.band if self.band is not None else self.filter
         self.band = self.filter if self.filter is not None else self.band
-        
     
     def calc_phases(self, phase_zero):
         self.phase = self.jd - phase_zero
         
     def restframe_phases(self, redshift):
         if self.phase is None:
-            raise AttributeError("self.phase must not be None, calculate it first using calc_phases with a phase zero")
+            raise AttributeError("self.phase must not be None, "
+                                 "calculate it first using calc_phases with a phase zero")
         return self.phase/(1.0+redshift)
     
     @classmethod
@@ -42,7 +47,7 @@ class MagPhot:
     
     @classmethod
     def from_dict(cls, d):
-        return cls(**{k:v for k, v in d.items() if k in [f.name for f in fields(cls)]})
+        return cls(**{k: v for k, v in d.items() if k in [f.name for f in fields(cls)]})
     
     def masked(self, cond: list):
         d2 = {name: value[cond] for name, value in asdict(self).items()}
@@ -50,26 +55,30 @@ class MagPhot:
     
     def absmag(self, dm, ext):
         return self.mag-dm-ext
+
+    def as_dataframe(self):
+        yield pd.DataFrame(asdict(self))
         
-        
-    
-    
+
 @dataclass    
 class FluxPhot(MagPhot):
     flux: pd.Series = None
-    flux_err: pd.Series  = None
-    
+    flux_err: pd.Series = None
+
 
 @dataclass
 class SN:
     phot: pd.DataFrame | MagPhot
     phases: pd.Series
     sninfo: pd.Series
-    sites: Dict[int,str] = field(default_factory=dict)
+    sites: Dict[int, str] = field(default_factory=dict)
+    sites_r: Dict[str, int] = field(init=False)
     name: str = '20lao'
     sub_only: bool = True
     distance: float = None
-    #specinfo:
+    bands: list[Filter] = field(default_factory=list)
+    limits: Optional[MagPhot] = None
+    # spectral_info:
     
     def __post_init__(self):
         if isinstance(self.phot, pd.DataFrame):
@@ -77,6 +86,9 @@ class SN:
         self.set_sites_r()
         self.rng = np.random.default_rng()
         self.distance = self.sninfo.dm
+        if len(self.bands) == 0:
+            self.bands = self.make_bands(bands=list(self.phot.band.unique()))
+
         
     def set_sites_r(self) -> None:
         self.sites_r = {value: key for key, value in self.sites.items()}
@@ -90,62 +102,105 @@ class SN:
     def band(self, filt: str, site: str = 'all', return_absmag: bool = False) -> MagPhot:
         phot = self.phot.masked(self.phot.band == filt)
         if self.sub_only:
-            phot = phot.masked(phot.sub)
+            phot = phot.masked(phot.sub.tolist())
         
-        if site!='all' and site not in self.sites_r.keys():
+        if site != 'all' and site not in self.sites_r.keys():
             raise ValueError('not a valid site name. Define first with `add_site`')
         
-        if site!='all':
+        if site != 'all':
             site_id = self.sites_r[site]
-            phot = phot.masked(phot.site==site_id)
+            phot = phot.masked(phot.site == site_id)
         if return_absmag:
-            phot.absmag(self.sninfo.dm, self.sninfo[filt+'ext'])
+            phot.mag = phot.absmag(self.distance, self.sninfo[filt+'ext'])
         return phot
     
     def site(self, site: str) -> MagPhot:
         site_id = self.sites_r[site]
-        return self.phot.masked(self.phot.site==site_id)
+        return self.phot.masked(self.phot.site == site_id)
     
-    def absmag(self, phot: MagPhot = None):
+    def absmag(self, filt: str, phot: MagPhot = None):
         if phot is None:
             phot = self.phot
-        return phot.absmag(self.sninfo.dm, self.sninfo[filt+'ext'])
-        
+        return phot.absmag(self.distance, self.sninfo[filt+'ext'])
+
+    @staticmethod
+    def make_bands(bands: Optional[list[str]] = None,
+                   band_order: Optional[list[str]] = None) -> list[Filter]:
+        """
+        Creates a sorted list of Filter objects from the bands in the photometry.
+        Any unknown filters are added to the end. If band_order is given, the
+        order of the bands is set to that, otherwise default_order from
+        supernova.filters.FilterSorter is used, which is hard-coded based on wave_eff.
+        """
+        bands.sort(key=FilterSorter(band_order))
+        return [Filter(f) for f in bands]
     
-    
-    def to_csv(self, basepath: Union[str, Path] = Path('../')):
-        basepath = Path(basepath).joinpath(Path(f"SNClass_{self.name}/"))
-        
+    def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
+        SNSerializer(self).to_csv(basepath)
+            
+    @classmethod
+    def from_csv(cls, dirpath: Union[str, Path]):
+        return SNSerializer.from_csv(dirpath)
+
+
+class SNSerializer:
+    names = 'phot,phases,sninfo,sites,filters,limits'.split(',')
+
+    def __init__(self, sn: SN):
+        self.sn = sn
+
+    def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
+        sn = self.sn
+        names = SNSerializer.names
+
+        basepath = Path(basepath).joinpath(Path(f"SNClass_{sn.name}/"))
         os.makedirs(basepath, exist_ok=True)
-        
-        self.sninfo['name'] = self.name
-        self.sninfo['sub_only'] = self.sub_only
-        names = 'phot,phases,sninfo,sites'.split(',')
-        for name, field in zip(names,[self.phot, self.phases, self.sninfo, self.sites]):
+
+        sn.sninfo['name'] = sn.name
+        sn.sninfo['sub_only'] = sn.sub_only
+        for name, field in zip(names, [sn.phot, sn.phases, sn.sninfo, sn.sites, sn.bands]):
             if isinstance(field, dict):
                 field = pd.Series(field)
             if isinstance(field, MagPhot):
                 field = pd.DataFrame.from_dict(asdict(field))
-            save_name = f"{basepath.absolute()}/{self.name}_{name}.csv"
-            #save_name += "_series.csv" if isinstance(lao.sninfo,pd.Series) else ".csv"
+            if isinstance(field, list):
+                field = pd.Series([f.name for f in field])
+            save_name = f"{basepath.absolute()}/{sn.name}_{name}.csv"
             field.to_csv(save_name, index=True)
-            
-    @classmethod
-    def from_csv(cls, dirpath: Union[str, Path]):
+
+    @staticmethod
+    def from_csv(dirpath: Union[str, Path]) -> SN:
         import glob
-        names = 'phot,phases,sninfo,sites'.split(',')
+        names = SNSerializer.names
         fields = {}
-        csvs = glob.glob( str(Path(dirpath) / '*.csv'))
+        csvs = glob.glob(str(Path(dirpath) / '*.csv'))
+        _sn_dict = {}
         for csv in csvs:
             df = pd.read_csv(csv, index_col=0).squeeze("columns")
             for name in names:
                 if name in csv:
+                    df.name = name
                     fields[name] = df
-                    
-        return cls(phot=fields['phot'],
+
+        # Dirty trick, unneeded if we would serialize to json, but then it's less readable
+        # by astronomers.
+        fields['sninfo'] = force_numeric_sninfo(fields['sninfo'])
+        fields['sites'] = fields['sites'].to_dict()
+
+        return SN(
+            phot=fields['phot'],
             phases=fields['phases'],
             sninfo=fields['sninfo'],
             sites=fields['sites'],
-            name=fields['sninfo'].name if 'name' in fields['sninfo'].index else 'unknown',
-            sub_only=fields['sninfo'].sub_only if 'name' in fields['sninfo'].index else False
-           )
+            name=fields['sninfo'].loc['name'] if 'name' in fields['sninfo'].index else 'unknown',
+            sub_only=bool(fields['sninfo'].sub_only) if 'sub_only' in fields['sninfo'].index else False,
+            bands=SN.make_bands(bands=fields['filters'].tolist(),
+                                band_order=fields['filters'].index.tolist()) if 'filters' in fields else [],
+            limits=fields['limits'] if 'limits' in fields else None
+            )
+
+
+def force_numeric_sninfo(sninfo: pd.Series) -> pd.Series:
+    _sninfo = pd.to_numeric(sninfo, errors='coerce')
+    _sninfo = _sninfo.mask(_sninfo.isna(), sninfo)
+    return _sninfo
