@@ -1,7 +1,6 @@
 import pandas as pd
 from dataclasses import dataclass, field, fields, asdict
 from typing import Dict, Union, Optional, TypeVar
-import astropy.units as u
 from pathlib import Path
 import os
 import numpy as np
