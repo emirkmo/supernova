@@ -1,36 +1,36 @@
 import os
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields, asdict
 from pathlib import Path
-from typing import Dict, Union, Optional, TypeVar
-
+from typing import Dict, Union, Optional
 import astropy.units as u
 import numpy as np
 import pandas as pd
 
 from .filters import Filter, FilterSorter
 
-Number = TypeVar('Number', int, float, u.Quantity)
+Number = int | float | u.Quantity
 
 
 @dataclass
 class AbstractMagPhot(ABC):
-    mag: pd.Series[Number]
-    mag_err: pd.Series[Number]
+    mag: pd.Series
+    mag_err: pd.Series
 
     def __post_init__(self):
         if self.__class__ == AbstractMagPhot:
             raise TypeError("Cannot instantiate abstract class.")
 
     @abstractmethod
-    def absmag(self, dm: Number, ext: Number) -> pd.Series[Number]:
+    def absmag(self, dm: Number, ext: Number) -> pd.Series:
         pass
 
 
 @dataclass
 class AbstractFluxPhot(ABC):
-    flux: pd.Series[Number]
-    flux_err: pd.Series[Number]
+    flux: pd.Series
+    flux_err: pd.Series
 
     def __post_init__(self):
         if self.__class__ == AbstractFluxPhot:
@@ -40,11 +40,12 @@ class AbstractFluxPhot(ABC):
 @dataclass
 class AbstractBasePhot(ABC):
     """Abstract Photometry dataclass"""
-    jd: pd.Series[Number]
-    band: pd.Series[str]
-    phase: pd.Series[Number]
-    sub: pd.Series[bool]
-    site: pd.Series[int]
+    jd: pd.Series
+    band: pd.Series
+    filter: pd.Series
+    phase: pd.Series
+    sub: pd.Series
+    site: pd.Series
 
     def __post_init__(self):
         if self.__class__ == AbstractBasePhot:
@@ -55,7 +56,7 @@ class AbstractBasePhot(ABC):
         pass
 
     @abstractmethod
-    def restframe_phases(self, redshift: Number) -> pd.Series[Number]:
+    def restframe_phases(self, redshift: Number) -> pd.Series:
         pass
 
     @abstractmethod
@@ -69,11 +70,23 @@ class AbstractBasePhot(ABC):
 
 @dataclass
 class BasePhot(AbstractBasePhot):
-    jd: pd.Series[Number] = field(default_factory=pd.Series)
-    band: pd.Series[str] = field(default_factory=pd.Series)
-    phase: pd.Series[Number] = field(default_factory=pd.Series)
-    sub: pd.Series[bool] = field(default_factory=pd.Series)
-    site: pd.Series[int] = field(default_factory=pd.Series)
+    jd: pd.Series = field(default=pd.Series(dtype=float))
+    band: pd.Series = field(default=pd.Series(dtype=str))
+    phase: pd.Series = field(default=pd.Series(dtype=float))
+    sub: pd.Series = field(default=pd.Series(dtype=bool))
+    site: pd.Series = field(default=pd.Series(dtype=int))
+    # only for backwards compatibility do not access directly as it overrides builtin filter.
+    filter: pd.Series = field(default=pd.Series(dtype=str))
+
+    def __post_init__(self):
+        if 0 < len(self.filter) == len(self):
+            warnings.warn("Phot: `filter` is deprecated, use `band` instead", DeprecationWarning)
+            self.band = self.filter
+
+        if len(self.band) != len(self):
+            raise ValueError("Either band or filter must be given the same length as jd."
+                             f"Got band: {len(self.band)}, "
+                             f"filter: {len(self.filter)}, jd: {len(self)}")
 
     def calc_phases(self, phase_zero):
         self.phase = self.jd - phase_zero
@@ -100,27 +113,38 @@ class BasePhot(AbstractBasePhot):
     def __len__(self):
         return len(self.jd)
 
+    # @property
+    # def filter(self) -> pd.Series:
+    #     if len(self.band) == len(self):
+    #         warnings.warn("Accessing filter is deprecated, use band instead.", DeprecationWarning)
+    #     return self.filter
+    #
+    # @filter.setter
+    # def filter(self, value: pd.Series):
+    #     self.filter = value
+
 
 @dataclass
 class MagPhot(BasePhot, AbstractMagPhot):
-    mag: pd.Series[Number] = field(default_factory=pd.Series)
-    mag_err: pd.Series[Number] = field(default_factory=pd.Series)
+    mag: pd.Series = field(default=pd.Series(dtype=float))
+    mag_err: pd.Series = field(default=pd.Series(dtype=float))
 
-    def absmag(self, dm: Number, ext: Number) -> pd.Series[Number]:
+    def absmag(self, dm: Number, ext: Number) -> pd.Series:
         return self.mag-dm-ext
+
 
 @dataclass    
 class FluxPhot(BasePhot, AbstractFluxPhot):
-    flux: pd.Series[Number] = field(default_factory=pd.Series)
-    flux_err: pd.Series[Number] = field(default_factory=pd.Series)
+    flux: pd.Series = field(default=pd.Series(dtype=float))
+    flux_err: pd.Series = field(default=pd.Series(dtype=float))
 
 
 @dataclass
 class Phot(FluxPhot, MagPhot):
-    mag: pd.Series[Number] = field(default_factory=pd.Series)
-    mag_err: pd.Series[Number] = field(default_factory=pd.Series)
-    flux: pd.Series[Number] = field(default_factory=pd.Series)
-    flux_err: pd.Series[Number] = field(default_factory=pd.Series)
+    mag: pd.Series = field(default=pd.Series(dtype=float))
+    mag_err: pd.Series = field(default=pd.Series(dtype=float))
+    flux: pd.Series = field(default=pd.Series(dtype=float))
+    flux_err: pd.Series = field(default=pd.Series(dtype=float))
 
 
 Photometry = FluxPhot | MagPhot | Phot
@@ -161,7 +185,7 @@ class SN:
     
     def __post_init__(self):
         if isinstance(self.phot, pd.DataFrame):
-            self.phot = PhotFactory.from_df(self.phot)
+            self.phot = PhotFactory().from_df(self.phot)
         self.set_sites_r()
         self.rng = np.random.default_rng()
         self.distance = self.sninfo.dm

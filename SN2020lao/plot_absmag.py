@@ -1,12 +1,11 @@
 import supernova.plotting as plot
-from supernova import MagPhot
+from supernova.supernova import PhotFactory
 from supernova.plotting.colors import DEFAULT_COLORS
 from supernova.sn_data import lao
 import pandas as pd
 
 # 20lao photometry
 lao.phot.band = lao.phot.band.apply(lambda l: l[0] if l.endswith('p') else l)
-lao.phot.redefine_filters()
 lao.bands = lao.make_bands(bands=list(lao.phot.band.unique()))
 lao.phot.calc_phases(lao.phases.tess_patrick)
 lao.phot.phase = lao.phot.restframe_phases(lao.sninfo.redshift)
@@ -21,7 +20,7 @@ rlim['band'] = 'r'
 rlim['mag'] = rlim['lim']
 rlim['mag_err'] = rlim['plot_err']
 rlim['site'] = 0
-rlim = MagPhot.from_df(rlim)
+rlim = PhotFactory.from_df(rlim)
 rlim.calc_phases(lao.phases.tess_patrick)
 rlim.phase = rlim.restframe_phases(lao.sninfo.redshift)
 rlim.mag = rlim.absmag(lao.distance, lao.sninfo.rext)  # absolute mag
@@ -45,6 +44,7 @@ ax.axvline(0, color='black', linestyle='--', alpha=0.5)  #, label='TESS $e_{exp}
 
 fig.tight_layout()
 fig.show()
+fig.savefig("absmag.pdf", dpi=200, format='pdf')
 
 # save lao
 lao.to_csv()

@@ -97,10 +97,9 @@ def zero_point_flux(svo_filt: svo.Filter, magsys='AB'):
     refjy = 3631.0 * u.Jy
     return refjy.to(flam, equivalencies=u.spectral_density(svo_filt.wave_pivot))
 
-
-class QuantityMeta(metaclass=u.Quantity):
-    def __rshift__(self, other):
-        return self * other
+# class QuantityMeta(metaclass=u.Quantity):
+#     def __rshift__(self, other):
+#         return self * other
 
 
 def mag_to_flux(mag: ArrayLike, filt: svo.Filter, magsys='AB'):

@@ -6,10 +6,15 @@ import astropy.units as u
 
 
 class SVOFilter(svo.Filter):
+    MagSys: str
 
     @property
-    def magsys(self):
+    def magsys(self) -> str:
         return self.MagSys
+
+    @magsys.setter
+    def magsys(self, value: str):
+        self.MagSys = value
 
 
 flam = u.erg / u.cm ** 2 / u.s / u.angstrom
