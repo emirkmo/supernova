@@ -1,7 +1,8 @@
+import copy
 import os
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields, asdict
+from dataclasses import dataclass, field, fields, asdict, replace
 from pathlib import Path
 from typing import Dict, Union, Optional
 import astropy.units as u
@@ -46,6 +47,7 @@ class AbstractBasePhot(ABC):
     phase: pd.Series
     sub: pd.Series
     site: pd.Series
+    # restframe: pd.Series
 
     def __post_init__(self):
         if self.__class__ == AbstractBasePhot:
@@ -77,6 +79,7 @@ class BasePhot(AbstractBasePhot):
     site: pd.Series = field(default=pd.Series(dtype=int))
     # only for backwards compatibility do not access directly as it overrides builtin filter.
     filter: pd.Series = field(default=pd.Series(dtype=str))
+    # restframe: pd.Series = field(default=pd.Series(dtype=float))
 
     def __post_init__(self):
         if 0 < len(self.filter) == len(self):
@@ -90,12 +93,13 @@ class BasePhot(AbstractBasePhot):
 
     def calc_phases(self, phase_zero):
         self.phase = self.jd - phase_zero
+        # self.restframe = pd.Series(dtype=float)  # reset restframe phases.
 
     def restframe_phases(self, redshift):
         if self.phase is None:
             raise AttributeError("self.phase must not be None, "
-                                 "calculate it first using calc_phases with a phase zero")
-        return self.phase / (1.0 + redshift)
+                                 "calculate it first using calc_phases with a phase_zero")
+        return self.phase / (1 + redshift)
 
     @classmethod
     def from_dict(cls, d: dict):
@@ -108,20 +112,10 @@ class BasePhot(AbstractBasePhot):
         return self.from_dict(d2)
 
     def as_dataframe(self) -> pd.DataFrame:
-        yield pd.DataFrame(asdict(self))
+        return pd.DataFrame(asdict(self))
 
     def __len__(self):
         return len(self.jd)
-
-    # @property
-    # def filter(self) -> pd.Series:
-    #     if len(self.band) == len(self):
-    #         warnings.warn("Accessing filter is deprecated, use band instead.", DeprecationWarning)
-    #     return self.filter
-    #
-    # @filter.setter
-    # def filter(self, value: pd.Series):
-    #     self.filter = value
 
 
 @dataclass
@@ -181,6 +175,8 @@ class SN:
     distance: float = None
     bands: list[Filter] = field(default_factory=list)
     limits: Optional[Photometry] = None
+    phase_zero: float = field(init=False, default=0)
+    redshift: float = field(init=False, default=0)
     # spectral_info:
     
     def __post_init__(self):
@@ -191,6 +187,11 @@ class SN:
         self.distance = self.sninfo.dm
         if len(self.bands) == 0:
             self.bands = self.make_bands(bands=list(self.phot.band.unique()))
+        if "redshift" in self.sninfo:
+            self.redshift = self.sninfo.redshift
+        if "phase_zero" in self.phases:
+            self.phase_zero = self.phases.phase_zero
+            self.set_phases()
 
     def set_sites_r(self) -> None:
         self.sites_r = {value: key for key, value in self.sites.items()}
@@ -245,6 +246,23 @@ class SN:
     @classmethod
     def from_csv(cls, dirpath: Union[str, Path]):
         return SNSerializer.from_csv(dirpath)
+
+    def set_phases(self, phase: Optional[float] = None) -> None:
+        """
+        Sets the phase of the SN to the given value.
+        Photometry objects are updated with the new phase.
+        """
+        self.phase_zero = phase if phase is not None else self.phase_zero
+        self.phot.calc_phases(self.phase_zero)
+        self.phases.loc['phase_zero'] = self.phase_zero
+
+    def restframe(self) -> 'SN':
+        """
+        Returns a copy of the SN object with the phases shifted to restframe.
+        """
+        sn = replace(self)
+        sn.phases = sn.phot.restframe_phases(self.redshift)
+        return sn
 
 
 class SNSerializer:
