@@ -1,73 +1,153 @@
-import pandas as pd
-from dataclasses import dataclass, field, fields, asdict
-from typing import Dict, Union, Optional, TypeVar
-from pathlib import Path
 import os
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field, fields, asdict
+from pathlib import Path
+from typing import Dict, Union, Optional, TypeVar
+
+import astropy.units as u
 import numpy as np
+import pandas as pd
 
-from supernova.filters import Filter, FilterSorter
+from .filters import Filter, FilterSorter
 
-sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT'}
-site_markers = {1: 's', 5: 'd', 8: 'v'}
-site_err_scales = {1: 2, 5: 2, 8: 5}
-Site = TypeVar('Site', int, str)
+Number = TypeVar('Number', int, float, u.Quantity)
+
 
 @dataclass
-class MagPhot:
-    jd: pd.Series = None
-    mag: pd.Series = None
-    mag_err: pd.Series = None
-    filter: pd.Series = None
-    band: pd.Series = None  # alternative to filter, avoid overwriting
-    phase: pd.Series = None
-    sub: pd.Series = None
-    site: pd.Series = None
+class AbstractMagPhot(ABC):
+    mag: pd.Series[Number]
+    mag_err: pd.Series[Number]
 
     def __post_init__(self):
-        self.redefine_filters()
+        if self.__class__ == AbstractMagPhot:
+            raise TypeError("Cannot instantiate abstract class.")
 
-    def redefine_filters(self):
-        self.filter = self.band if self.band is not None else self.filter
-        self.band = self.filter if self.filter is not None else self.band
-    
+    @abstractmethod
+    def absmag(self, dm: Number, ext: Number) -> pd.Series[Number]:
+        pass
+
+
+@dataclass
+class AbstractFluxPhot(ABC):
+    flux: pd.Series[Number]
+    flux_err: pd.Series[Number]
+
+    def __post_init__(self):
+        if self.__class__ == AbstractFluxPhot:
+            raise TypeError("Cannot instantiate abstract class.")
+
+
+@dataclass
+class AbstractBasePhot(ABC):
+    """Abstract Photometry dataclass"""
+    jd: pd.Series[Number]
+    band: pd.Series[str]
+    phase: pd.Series[Number]
+    sub: pd.Series[bool]
+    site: pd.Series[int]
+
+    def __post_init__(self):
+        if self.__class__ == AbstractBasePhot:
+            raise TypeError("Cannot instantiate abstract class.")
+
+    @abstractmethod
+    def calc_phases(self, phase_zero: Number) -> None:
+        pass
+
+    @abstractmethod
+    def restframe_phases(self, redshift: Number) -> pd.Series[Number]:
+        pass
+
+    @abstractmethod
+    def masked(self, cond: list) -> 'Photometry':
+        pass
+
+    @abstractmethod
+    def as_dataframe(self) -> pd.DataFrame:
+        pass
+
+
+@dataclass
+class BasePhot(AbstractBasePhot):
+    jd: pd.Series[Number] = field(default_factory=pd.Series)
+    band: pd.Series[str] = field(default_factory=pd.Series)
+    phase: pd.Series[Number] = field(default_factory=pd.Series)
+    sub: pd.Series[bool] = field(default_factory=pd.Series)
+    site: pd.Series[int] = field(default_factory=pd.Series)
+
     def calc_phases(self, phase_zero):
         self.phase = self.jd - phase_zero
-        
+
     def restframe_phases(self, redshift):
         if self.phase is None:
             raise AttributeError("self.phase must not be None, "
                                  "calculate it first using calc_phases with a phase zero")
-        return self.phase/(1.0+redshift)
-    
+        return self.phase / (1.0 + redshift)
+
     @classmethod
-    def from_df(cls, df):
-        d = df.to_dict('series')
-        return cls.from_dict(d)
-    
-    @classmethod
-    def from_dict(cls, d):
+    def from_dict(cls, d: dict):
+        if cls == BasePhot:
+            raise TypeError("Cannot instantiate Base class. Use a subclass.")
         return cls(**{k: v for k, v in d.items() if k in [f.name for f in fields(cls)]})
-    
+
     def masked(self, cond: list):
         d2 = {name: value[cond] for name, value in asdict(self).items()}
-        return MagPhot.from_dict(d2)
-    
-    def absmag(self, dm, ext):
+        return self.from_dict(d2)
+
+    def as_dataframe(self) -> pd.DataFrame:
+        yield pd.DataFrame(asdict(self))
+
+    def __len__(self):
+        return len(self.jd)
+
+
+@dataclass
+class MagPhot(BasePhot, AbstractMagPhot):
+    mag: pd.Series[Number] = field(default_factory=pd.Series)
+    mag_err: pd.Series[Number] = field(default_factory=pd.Series)
+
+    def absmag(self, dm: Number, ext: Number) -> pd.Series[Number]:
         return self.mag-dm-ext
 
-    def as_dataframe(self):
-        yield pd.DataFrame(asdict(self))
-        
-
 @dataclass    
-class FluxPhot(MagPhot):
-    flux: pd.Series = None
-    flux_err: pd.Series = None
+class FluxPhot(BasePhot, AbstractFluxPhot):
+    flux: pd.Series[Number] = field(default_factory=pd.Series)
+    flux_err: pd.Series[Number] = field(default_factory=pd.Series)
+
+
+@dataclass
+class Phot(FluxPhot, MagPhot):
+    mag: pd.Series[Number] = field(default_factory=pd.Series)
+    mag_err: pd.Series[Number] = field(default_factory=pd.Series)
+    flux: pd.Series[Number] = field(default_factory=pd.Series)
+    flux_err: pd.Series[Number] = field(default_factory=pd.Series)
+
+
+Photometry = FluxPhot | MagPhot | Phot
+
+
+class PhotFactory:
+    """
+    Factory class to create Photometry objects.
+    """
+
+    @staticmethod
+    def from_df(df: pd.DataFrame) -> Photometry:
+        d = df.to_dict('series')
+        mag = 'mag' in d
+        flux = 'flux' in d
+        if mag and flux:
+            return Phot.from_dict(d)
+        elif mag:
+            return MagPhot.from_dict(d)
+        elif flux:
+            return FluxPhot.from_dict(d)
+        raise ValueError("df must contain either 'mag' or 'flux' columns")
 
 
 @dataclass
 class SN:
-    phot: pd.DataFrame | MagPhot
+    phot: pd.DataFrame | Photometry
     phases: pd.Series
     sninfo: pd.Series
     sites: Dict[int, str] = field(default_factory=dict)
@@ -76,19 +156,18 @@ class SN:
     sub_only: bool = True
     distance: float = None
     bands: list[Filter] = field(default_factory=list)
-    limits: Optional[MagPhot] = None
+    limits: Optional[Photometry] = None
     # spectral_info:
     
     def __post_init__(self):
         if isinstance(self.phot, pd.DataFrame):
-            self.phot = MagPhot.from_df(self.phot)
+            self.phot = PhotFactory.from_df(self.phot)
         self.set_sites_r()
         self.rng = np.random.default_rng()
         self.distance = self.sninfo.dm
         if len(self.bands) == 0:
             self.bands = self.make_bands(bands=list(self.phot.band.unique()))
 
-        
     def set_sites_r(self) -> None:
         self.sites_r = {value: key for key, value in self.sites.items()}
         
@@ -98,7 +177,7 @@ class SN:
         self.sites[site_id] = name
         self.set_sites_r()
     
-    def band(self, filt: str, site: str = 'all', return_absmag: bool = False) -> MagPhot:
+    def band(self, filt: str, site: str = 'all', return_absmag: bool = False) -> Photometry:
         phot = self.phot.masked(self.phot.band == filt)
         if self.sub_only:
             phot = phot.masked(phot.sub.tolist())
@@ -110,14 +189,16 @@ class SN:
             site_id = self.sites_r[site]
             phot = phot.masked(phot.site == site_id)
         if return_absmag:
+            if not isinstance(phot, AbstractMagPhot):
+                raise TypeError("Photometry must be MagPhot or Phot to return absolute magnitude.")
             phot.mag = phot.absmag(self.distance, self.sninfo[filt+'ext'])
         return phot
     
-    def site(self, site: str) -> MagPhot:
+    def site(self, site: str) -> Photometry:
         site_id = self.sites_r[site]
         return self.phot.masked(self.phot.site == site_id)
     
-    def absmag(self, filt: str, phot: MagPhot = None):
+    def absmag(self, filt: str, phot: AbstractMagPhot = None):
         if phot is None:
             phot = self.phot
         return phot.absmag(self.distance, self.sninfo[filt+'ext'])
@@ -157,21 +238,21 @@ class SNSerializer:
 
         sn.sninfo['name'] = sn.name
         sn.sninfo['sub_only'] = sn.sub_only
-        for name, field in zip(names, [sn.phot, sn.phases, sn.sninfo, sn.sites, sn.bands]):
-            if isinstance(field, dict):
-                field = pd.Series(field)
-            if isinstance(field, MagPhot):
-                field = pd.DataFrame.from_dict(asdict(field))
-            if isinstance(field, list):
-                field = pd.Series([f.name for f in field])
+        for name, _field in zip(names, [sn.phot, sn.phases, sn.sninfo, sn.sites, sn.bands]):
+            if isinstance(_field, dict):
+                _field = pd.Series(_field)
+            if isinstance(_field, Photometry):
+                _field = pd.DataFrame.from_dict(asdict(_field))
+            if isinstance(_field, list):
+                _field = pd.Series([f.name for f in _field])
             save_name = f"{basepath.absolute()}/{sn.name}_{name}.csv"
-            field.to_csv(save_name, index=True)
+            _field.to_csv(save_name, index=True)
 
     @staticmethod
     def from_csv(dirpath: Union[str, Path]) -> SN:
         import glob
         names = SNSerializer.names
-        fields = {}
+        _fields = {}
         csvs = glob.glob(str(Path(dirpath) / '*.csv'))
         _sn_dict = {}
         for csv in csvs:
@@ -179,23 +260,23 @@ class SNSerializer:
             for name in names:
                 if name in csv:
                     df.name = name
-                    fields[name] = df
+                    _fields[name] = df
 
         # Dirty trick, unneeded if we would serialize to json, but then it's less readable
         # by astronomers.
-        fields['sninfo'] = force_numeric_sninfo(fields['sninfo'])
-        fields['sites'] = fields['sites'].to_dict()
+        _fields['sninfo'] = force_numeric_sninfo(_fields['sninfo'])
+        _fields['sites'] = _fields['sites'].to_dict()
 
         return SN(
-            phot=fields['phot'],
-            phases=fields['phases'],
-            sninfo=fields['sninfo'],
-            sites=fields['sites'],
-            name=fields['sninfo'].loc['name'] if 'name' in fields['sninfo'].index else 'unknown',
-            sub_only=bool(fields['sninfo'].sub_only) if 'sub_only' in fields['sninfo'].index else False,
-            bands=SN.make_bands(bands=fields['filters'].tolist(),
-                                band_order=fields['filters'].index.tolist()) if 'filters' in fields else [],
-            limits=fields['limits'] if 'limits' in fields else None
+            phot=_fields['phot'],
+            phases=_fields['phases'],
+            sninfo=_fields['sninfo'],
+            sites=_fields['sites'],
+            name=_fields['sninfo'].loc['name'] if 'name' in _fields['sninfo'].index else 'unknown',
+            sub_only=bool(_fields['sninfo'].sub_only) if 'sub_only' in _fields['sninfo'].index else False,
+            bands=SN.make_bands(bands=_fields['filters'].tolist(),
+                                band_order=_fields['filters'].index.tolist()) if 'filters' in _fields else [],
+            limits=_fields['limits'] if 'limits' in _fields else None
             )
 
 

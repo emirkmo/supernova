@@ -5,7 +5,8 @@ from matplotlib.ticker import MultipleLocator, AutoMinorLocator
 import matplotlib as mpl
 
 from supernova.plotting.colors import ColorIterable
-from supernova.supernova import MagPhot, FluxPhot, SN, Site
+from supernova.supernova import SN, Photometry, MagPhot, FluxPhot
+from supernova.sites import SiteType as Site
 from supernova.filters import Filter
 from typing import Optional, Any
 from numpy.typing import ArrayLike
@@ -24,7 +25,7 @@ plot_defaults = {"label": "",
                  'color': None}
 
 figure_defaults = {"figsize": (8, 6),
-                   "dpi": 200,}
+                   "dpi": 200, }
 
 
 def plot_mag(band: MagPhot, ax: plt.Axes, shift: float = 0, **plot_kwargs: Any) -> plt.Axes:
@@ -39,14 +40,17 @@ def plot_flux(band: FluxPhot, ax: plt.Axes, shift: float = 0, **plot_kwargs: Any
     return ax
 
 
-def plot_lim(band: MagPhot, ax: plt.Axes, shift: float = 0, **plot_kwargs: Any) -> plt.Axes:
+def plot_lim(band: Photometry, ax: plt.Axes, shift: float = 0, as_flux: bool = False, **plot_kwargs: Any) -> plt.Axes:
     lim_defaults = {"label": "", "marker": 'v', "markerfacecolor": 'None'}
     kwargs = {**plot_defaults, **lim_defaults, **plot_kwargs}
-    ax.plot(band.phase, band.mag+shift, **kwargs)
+    if as_flux:
+        ax.plot(band.phase, band.flux+shift, **kwargs)
+    else:
+        ax.plot(band.phase, band.mag+shift, **kwargs)
     return ax
 
 
-def make_figure(fig_kwargs: Optional[dict] = None) -> tuple[plt.Figure, tuple[plt.Axes]|plt.Axes]:
+def make_figure(fig_kwargs: Optional[dict] = None) -> tuple[plt.Figure, tuple[plt.Axes] | plt.Axes]:
     if fig_kwargs is None:
         fig_kwargs = figure_defaults
     fig, axs = plt.subplots(**fig_kwargs)
