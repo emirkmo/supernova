@@ -1,14 +1,16 @@
-import copy
 import os
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields, asdict, replace
 from pathlib import Path
-from typing import Dict, Union, Optional
+from typing import Dict, Union, Optional, Any
 import astropy.units as u
 import numpy as np
 import pandas as pd
-
+from astropy.coordinates import SkyCoord
+from astropy.cosmology import Cosmology, WMAP5  # type: ignore
+# noinspection PyProtectedMember
+from astropy.coordinates.name_resolve import NameResolveError
 from .filters import Filter, FilterSorter
 
 Number = int | float | u.Quantity
@@ -47,6 +49,7 @@ class AbstractBasePhot(ABC):
     phase: pd.Series
     sub: pd.Series
     site: pd.Series
+
     # restframe: pd.Series
 
     def __post_init__(self):
@@ -79,6 +82,7 @@ class BasePhot(AbstractBasePhot):
     site: pd.Series = field(default=pd.Series(dtype=int))
     # only for backwards compatibility do not access directly as it overrides builtin filter.
     filter: pd.Series = field(default=pd.Series(dtype=str))
+
     # restframe: pd.Series = field(default=pd.Series(dtype=float))
 
     def __post_init__(self):
@@ -124,10 +128,10 @@ class MagPhot(BasePhot, AbstractMagPhot):
     mag_err: pd.Series = field(default=pd.Series(dtype=float))
 
     def absmag(self, dm: Number, ext: Number) -> pd.Series:
-        return self.mag-dm-ext
+        return self.mag - dm - ext
 
 
-@dataclass    
+@dataclass
 class FluxPhot(BasePhot, AbstractFluxPhot):
     flux: pd.Series = field(default=pd.Series(dtype=float))
     flux_err: pd.Series = field(default=pd.Series(dtype=float))
@@ -177,8 +181,9 @@ class SN:
     limits: Optional[Photometry] = None
     phase_zero: float = field(init=False, default=0)
     redshift: float = field(init=False, default=0)
+
     # spectral_info:
-    
+
     def __post_init__(self):
         if isinstance(self.phot, pd.DataFrame):
             self.phot = PhotFactory().from_df(self.phot)
@@ -195,38 +200,38 @@ class SN:
 
     def set_sites_r(self) -> None:
         self.sites_r = {value: key for key, value in self.sites.items()}
-        
+
     def add_site(self, name: str, site_id: int = None) -> None:
         if site_id is None:
             site_id = self.rng.choice(set(range(100)) - set(self.sites.keys()))
         self.sites[site_id] = name
         self.set_sites_r()
-    
+
     def band(self, filt: str, site: str = 'all', return_absmag: bool = False) -> Photometry:
         phot = self.phot.masked(self.phot.band == filt)
         if self.sub_only:
             phot = phot.masked(phot.sub.tolist())
-        
+
         if site != 'all' and site not in self.sites_r.keys():
             raise ValueError('not a valid site name. Define first with `add_site`')
-        
+
         if site != 'all':
             site_id = self.sites_r[site]
             phot = phot.masked(phot.site == site_id)
         if return_absmag:
             if not isinstance(phot, AbstractMagPhot):
                 raise TypeError("Photometry must be MagPhot or Phot to return absolute magnitude.")
-            phot.mag = phot.absmag(self.distance, self.sninfo[filt+'ext'])
+            phot.mag = phot.absmag(self.distance, self.sninfo[filt + 'ext'])
         return phot
-    
+
     def site(self, site: str) -> Photometry:
         site_id = self.sites_r[site]
         return self.phot.masked(self.phot.site == site_id)
-    
+
     def absmag(self, filt: str, phot: AbstractMagPhot = None):
         if phot is None:
             phot = self.phot
-        return phot.absmag(self.distance, self.sninfo[filt+'ext'])
+        return phot.absmag(self.distance, self.sninfo[filt + 'ext'])
 
     @staticmethod
     def make_bands(bands: Optional[list[str]] = None,
@@ -239,10 +244,10 @@ class SN:
         """
         bands.sort(key=FilterSorter(band_order))
         return [Filter(f) for f in bands]
-    
+
     def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
         SNSerializer(self).to_csv(basepath)
-            
+
     @classmethod
     def from_csv(cls, dirpath: Union[str, Path]):
         return SNSerializer.from_csv(dirpath)
@@ -264,6 +269,23 @@ class SN:
         sn.phases = sn.phot.restframe_phases(self.redshift)
         return sn
 
+    @classmethod
+    def from_phot(cls, phot: Photometry, name: str, redshift: float, sub_only: bool = False,
+                  phase_zero: Optional[float] = None, lims: Optional[Photometry] = None,
+                  **sninfo_kwargs: Any) -> "SN":
+        sninfo = sninfo_kwargs | {'redshift': redshift, 'name': name, 'sub_only': sub_only}
+        phase_zero = phot.jd.min() if phase_zero is None else phase_zero
+        return cls(
+            name=name,
+            phot=phot,
+            phases=pd.Series({'phase_zero': phase_zero}),
+            sninfo=pd.Series(sninfo),
+            sites={site: str(site) for site in phot.site.unique()},
+            sub_only=sub_only,
+            bands=SN.make_bands(bands=phot.band.unique().tolist()),
+            limits=lims
+        )
+
 
 class SNSerializer:
     names = 'phot,phases,sninfo,sites,filters,limits'.split(',')
@@ -280,7 +302,8 @@ class SNSerializer:
 
         sn.sninfo['name'] = sn.name
         sn.sninfo['sub_only'] = sn.sub_only
-        for name, _field in zip(names, [sn.phot, sn.phases, sn.sninfo, sn.sites, sn.bands]):
+        field_vals = [getattr(sn, f.name) for f in fields(sn) if f.name in names]
+        for name, _field in zip(names, field_vals):
             if isinstance(_field, dict):
                 _field = pd.Series(_field)
             if isinstance(_field, Photometry):
@@ -319,7 +342,95 @@ class SNSerializer:
             bands=SN.make_bands(bands=_fields['filters'].tolist(),
                                 band_order=_fields['filters'].index.tolist()) if 'filters' in _fields else [],
             limits=_fields['limits'] if 'limits' in _fields else None
-            )
+        )
+
+
+@dataclass
+class SNInfo:
+    name: str
+    redshift: float = 0
+    phase_zero: Optional[float] = None
+    ra: Optional[Number | str] = None
+    dec: Number | str = None
+
+    ebv: Number = -99
+    dm: Number = -99
+    cosmology: Cosmology = WMAP5
+
+    sub_only: bool = True
+    coords: SkyCoord = field(init=False, default=None)
+
+    def __post_init__(self):
+        self.set_coords()
+        if self.dm == -99 and self.redshift != 0:
+            self.dm = self.distance_modulus_from_cosmo()
+        if self.ebv == -99:
+            self.get_ebv()
+
+    def set_coords(self) -> None:
+        def from_str(ra_s: str, dec_s: str):
+            return SkyCoord(ra_s, dec_s, unit=(u.hourangle, u.deg),
+                            frame='icrs', equinox='J2000')
+
+        if isinstance(self.ra, str) and isinstance(self.dec, str):
+            self.coords = from_str(self.ra, self.dec)
+
+        elif isinstance(self.ra, Number) and isinstance(self.dec, Number):
+            self.coords = SkyCoord(self.ra, self.dec, unit=(u.deg, u.deg),
+                                   frame='icrs', equinox='J2000')
+        elif self.name.startswith("SN"):
+            try:
+                self.coords = SkyCoord.from_name(self.name)
+            except NameResolveError:
+                pass
+
+        if self.coords is None:
+            query_str = ("Could not resolve coordinates for this SN."
+                         "Please enter them manually. ra format:"
+                         " hh:mm:ss or 00h00m00.0s dec "
+                         "format: dd:mm:ss or +/-00d00m00.0s. RA first, RA:")
+            ra = self.query_user(query_str)
+            dec = self.query_user("Dec:")
+            self.coords = SkyCoord(  # will raise appropriate error if format is wrong.
+                ra, dec, unit=(u.hourangle, u.deg),
+                frame='icrs', equinox='J2000')
+        self.ra = self.coords.ra.deg
+        self.dec = self.coords.dec.deg
+
+    @staticmethod
+    def query_user(query: str) -> str:
+        return input(query)
+
+    def distance_modulus_from_cosmo(self) -> float:
+        if self.redshift == 0:
+            raise ValueError("Redshift cannot be 0 if calculating distance modulus.")
+        dm = self.cosmology.distmod(self.redshift)  # type: ignore
+        return dm.value
+
+    def get_ebv(self):
+        try:
+            ebv = get_extinction_irsa(self.coords)
+
+        except Exception as e:
+            print(e)
+            ebv = self.query_user("Could not get E(B-V) from IRSA."
+                                  " Please enter manually:")
+        self.ebv = float(ebv)
+
+    def to_series(self) -> pd.Series:
+        return pd.Series(asdict(self))
+
+    @classmethod
+    def from_csv(cls, csv: Path) -> "SNInfo":
+        df = pd.read_csv(csv, index_col=0).squeeze("columns")
+        df = force_numeric_sninfo(df)
+        return cls(**df.to_dict())
+
+
+def get_extinction_irsa(coords: SkyCoord) -> float:
+    from astroquery.irsa_dust import IrsaDust
+    table = IrsaDust.get_query_table(coords, section='ebv')
+    return table["ext SandF ref"][0]
 
 
 def force_numeric_sninfo(sninfo: pd.Series) -> pd.Series:
