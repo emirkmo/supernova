@@ -4,7 +4,7 @@ from .readers import PathType
 from .ztf import collate_ztf_flows, collate_ztfphot, collate_ztfphot_limits
 from .utils import add_phot
 from .collators import (
-    AbstractCollator, GenericCSVCollator, GenericECSVCollator, GenericJSONCollator)
+    AbstractCollator, collate_ecsv, collate_csv, collate_json)
 from supernova.supernova import SN, SNInfo, Photometry
 from typing import Optional, Any
 from tempfile import TemporaryDirectory
@@ -13,14 +13,19 @@ PREDEFINED_COLLATORS = {'flows': collate_flows,
                         'ztf_flows': collate_ztf_flows,
                         'ztfphot': collate_ztfphot}
 PREDEFINED_LIMITS_COLLATORS = {'ztfphot_limits': collate_ztfphot_limits}
-GENERIC_COLLATORS =
+GENERIC_COLLATORS = {'ecsv': collate_ecsv,
+                     'csv': collate_csv,
+                     'json': collate_json}
 
 
 class DataIngestor:
-
-    def __init__(self, path: PathType, sninfo: Optional[SNInfo] = None,
+    """
+    Base class for data ingestors.
+    """
+    def __init__(self, path: PathType,
                  collators: Optional[dict[str, AbstractCollator]] = None,
                  limits_collators: Optional[dict[str, AbstractCollator]] = None,
+                 sninfo: Optional[SNInfo] = None,
                  **sninfo_kwargs: Any) -> None:
         """
         A class to collect data from a directory of files and create an SN object.
@@ -41,6 +46,13 @@ class DataIngestor:
         self.collators = collators or PREDEFINED_COLLATORS
         self.limits_collators = limits_collators or PREDEFINED_LIMITS_COLLATORS
         self.sninfo_kwargs = sninfo_kwargs
+
+    def setup(self) -> None:
+
+        """
+        Setup the data ingestor
+        """
+        pass
 
     def get_files(self) -> list[Path]:
         return list(self.path.glob('*'))
@@ -95,7 +107,10 @@ class DataIngestor:
         with self.tmpdir() as tmpdir:
             self.move_files_to_temp_dir(Path(tmpdir.name))
             phots = self.load_phot()
-            lims = self.load_phot(lims=True)
+            if self.limits_collators is not None:
+                lims = self.load_phot(lims=True)
+            else:
+                lims = []
             if len(phots) == 0:
                 raise FileNotFoundError(f"No photometry found in {self.path}."
                                         f"With defined data collators: {self.collators}")
@@ -114,3 +129,24 @@ class DataIngestor:
     @staticmethod
     def query_user(query: str) -> str:
         return input(query)
+
+
+class GenericIngestor(DataIngestor):
+    def __init__(self, path: PathType,
+                 collators: Optional[dict[str, AbstractCollator]] = None,
+                 limits_collators: Optional[dict[str, AbstractCollator]] = None,
+                 sninfo: Optional[SNInfo] = None,
+                 **sninfo_kwargs: Any) -> None:
+        collators = collators or GENERIC_COLLATORS
+        super().__init__(path, collators, limits_collators, sninfo, **sninfo_kwargs)
+
+
+class FlowsIngestor(DataIngestor):
+    def __init__(self, path: PathType,
+                 collators: Optional[dict[str, AbstractCollator]] = None,
+                 limits_collators: Optional[dict[str, AbstractCollator]] = None,
+                 sninfo: Optional[SNInfo] = None,
+                 **sninfo_kwargs: Any) -> None:
+        collators = collators or PREDEFINED_COLLATORS
+        limits_collators = limits_collators or PREDEFINED_LIMITS_COLLATORS
+        super().__init__(path, collators, limits_collators, sninfo, **sninfo_kwargs)
