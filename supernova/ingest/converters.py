@@ -6,7 +6,7 @@ import pandas as pd
 
 # noinspection PyUnusedLocal
 @dataclass(frozen=True)
-class Converter(metaclass=Protocol):
+class Converter(Protocol):
     glob_str: str
     jd_col: str
     mag_col: str
@@ -17,9 +17,6 @@ class Converter(metaclass=Protocol):
     df: pd.DataFrame
 
     def __init__(self, df: pd.DataFrame) -> None:
-        ...
-
-    def __call__(self) -> pd.DataFrame:
         ...
 
     def jd_convert(self) -> None:
@@ -55,14 +52,6 @@ class BaseConverter(Converter):
     site_col: Optional[str] = 'site'
     df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    def __post_init__(self) -> None:
-        self.jd_convert()
-        self.mag_convert()
-        self.mag_err_convert()
-        self.band_convert()
-        self.sub_convert()
-        self.site_convert()
-
     def jd_convert(self) -> None:
         self.df['jd'] = self.df[self.jd_col]
 
@@ -82,9 +71,12 @@ class BaseConverter(Converter):
         self.df['site'] = self.df[self.site_col]
 
     def convert(self) -> pd.DataFrame:
-        return self.df
-
-    def __call__(self) -> pd.DataFrame:
+        self.jd_convert()
+        self.mag_convert()
+        self.mag_err_convert()
+        self.band_convert()
+        self.sub_convert()
+        self.site_convert()
         return self.df
 
 

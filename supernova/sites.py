@@ -1,7 +1,8 @@
-from dataclasses import dataclass, asdict, field
-from typing import TypeVar, Mapping, Optional
+from dataclasses import dataclass, asdict, field, fields
+from typing import TypeVar, Mapping, Optional, Collection
 from typing_extensions import Unpack
 import numpy as np
+import pandas as pd
 
 SiteType = TypeVar('SiteType', int, str)
 SiteDict = Mapping[int, str]
@@ -24,7 +25,7 @@ class Sites:
     site_names: list[str] = field(default_factory=list, init=False)
     site_ids: list[int] = field(default_factory=list, init=False)
     sites_by_name: dict[str, Site] = field(default_factory=dict, init=False)
-    markers: dict[int, str] = field(default_factory=dict)
+    markers: dict[int, Optional[str]] = field(default_factory=dict)
     site_err_scales: dict[int, float] = field(default_factory=dict)
     # for repeatable siteid generation:
     rng: np.random.Generator = field(default_factory=np.random.default_rng)
@@ -48,6 +49,10 @@ class Sites:
         self.sites_by_name = {value.name: value for value in self.sites.values()}
         self.markers = {site.id: site.marker for site in self.sites.values()}
 
+    def update_markers(self) -> None:
+        for site in self.sites.values():
+            site.marker = self.markers[site.id]
+
     def get_marker(self, site: SiteType) -> str:
         return self[site].marker
 
@@ -57,6 +62,9 @@ class Sites:
     def asdict(self) -> dict:
         return asdict(self)
 
+    def to_df(self) -> pd.DataFrame:
+        return pd.DataFrame(self.asdict()['sites']).T
+
     def __len__(self) -> int:
         return len(self.site_ids)
 
@@ -64,20 +72,40 @@ class Sites:
         return self.rng.choice(set(range(100)) - set(self.site_ids))
 
     def add_site(self, name: str = 'Unknown', **site_kwargs: Unpack[Site]) -> None:
-        if 'id' not in site_kwargs:
+        if site_kwargs.get('id', None) is None:
             site_kwargs['id'] = self.generate_id()
         self.sites[site_kwargs['id']] = Site(name=name, **site_kwargs)
         self._refresh_sites()
 
     @classmethod
-    def from_dict(cls, d: dict[int, str]) -> 'Sites':
-        return cls(sites={k: Site(id=k, name=v) for k, v in d.items()})
+    def from_sitemap(cls, sitemap: SiteDict) -> 'Sites':
+        return cls(sites={k: Site(id=k, name=v) for k, v in sitemap.items()})
+
+    @classmethod
+    def from_dict(cls, d: dict[int, dict[str, int | str | None]]) -> 'Sites':
+        site_names = [f.name for f in fields(Site)]
+        required_keys = [f for f in fields(Site) if not isinstance(f.default, f.type)]
+
+        return cls(
+            sites={k: Site(**{sk: sv for sk, sv in v.items() if sk in site_names})
+                   for k, v in d.items() if all([vk for vk in v if vk in required_keys])}
+        )
 
     @classmethod
     def from_list(cls, sitenames: list) -> 'Sites':
         return cls(sites={i: s for i, s in enumerate(sitenames)})
 
+    @classmethod
+    def from_df(cls, df: pd.DataFrame | pd.Series) -> 'Sites':
+        if isinstance(df, pd.Series):
+            return cls.from_sitemap(df.to_dict())
+        if 'id' not in df:
+            df['id'] = df.index
+        if 'name' not in df:
+            df.rename({df.columns[0]: 'name'}, axis=1, inplace=True)
+        return cls.from_dict(df.to_dict('index'))
 
-flows_sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT'}
-site_markers = {1: 's', 5: 'd', 8: 'v'}
-site_err_scales = {1: 2, 5: 2, 8: 5}
+
+flows_sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT', 0: 'ZTF'}
+site_markers = {1: 's', 5: 'd', 8: 'v', 0: 'o'}
+site_err_scales = {1: 2, 5: 2, 8: 5, 0: 1}

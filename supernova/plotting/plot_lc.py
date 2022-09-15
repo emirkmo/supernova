@@ -3,15 +3,14 @@ from matplotlib.lines import Line2D
 import numpy as np
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator
 import matplotlib as mpl
-
 from supernova.plotting.colors import ColorIterable
 from supernova.supernova import SN, Photometry, MagPhot, FluxPhot
-from supernova.sites import SiteType as Site
 from supernova.filters import Filter
 from typing import Optional, Any
 from numpy.typing import ArrayLike
 import warnings
 import seaborn as sns
+from .colors import DEFAULT_COLORS
 
 # Plot styling reasonable defaults.
 sns.set_style("ticks")
@@ -26,6 +25,10 @@ plot_defaults = {"label": "",
 
 figure_defaults = {"figsize": (8, 6),
                    "dpi": 200, }
+legend_defaults = {"frameon": True,
+                   "columnspacing": 0.3,
+                   "handletextpad": 0.1,
+                   "handlelength": 1.5}
 
 
 def plot_mag(band: MagPhot, ax: plt.Axes, shift: float = 0, **plot_kwargs: Any) -> plt.Axes:
@@ -47,6 +50,15 @@ def plot_lim(band: Photometry, ax: plt.Axes, shift: float = 0, as_flux: bool = F
         ax.plot(band.phase, band.flux+shift, **kwargs)
     else:
         ax.plot(band.phase, band.mag+shift, **kwargs)
+    return ax
+
+
+def plot_lims(sn: SN, filt: Filter, ax: plt.Axes, absmag: bool = False, as_flux: bool = False, **plot_kwargs: Any) -> plt.Axes:
+    """
+    Plot limits for a given band.
+    """
+    band = sn.band(filt.name, return_absmag=absmag, lims=True)
+    ax = plot_lim(band, ax, filt.plot_shift, as_flux, **plot_kwargs)
     return ax
 
 
@@ -77,7 +89,7 @@ def make_plot_shifts(sn: SN, shifts: Optional[ArrayLike] = None,
     if reversed_for_abs:
         shifts = shifts[::-1]
 
-    for i, f in enumerate(sn.bands):
+    for i, f in enumerate(sn.bands.values()):
         f.plot_shift = shifts[i]
 
     return sn
@@ -98,21 +110,17 @@ def make_plot_colors(sn: SN,
         raise ValueError("colors must be the same or greater "
                          "length as the number of bands or `None`.")
     if isinstance(colors, list):
-        colors = {band.name: color for band, color in zip(sn.bands, colors)}
-    for band in sn.bands:
+        colors = {band.name: color for band, color in zip(sn.bands.values(), colors)}
+    for band in sn.bands.values():
         band.plot_color = colors[band.name]
     return sn
 
 
-def get_site_markers(sites: list[Site]) -> dict[Site, str]:
+def _get_markers_to_use() -> list[str]:
     """
-    Given a list of sites (id or str), return a dict of site: marker
-    using more legible markers first.
+    Get a list of markers to use for plotting.
     """
     markers = ['o', 'd', 's']
-    if len(sites) <= len(markers):
-        return {site: marker for site, marker in zip(sites, markers)}
-
     # Pad smartly with markers using more legible markers first.
     filled_markers = list(Line2D.filled_markers)
     # remove markers that are already in use
@@ -122,14 +130,30 @@ def get_site_markers(sites: list[Site]) -> dict[Site, str]:
     # pad filled_markers with unfilled markers
     markers += filled_markers
     markers += ["1", "2", "3", "4", "+", "X"]
+    return markers
 
-    if len(sites) <= len(markers):
-        site_markers = {}
-        for site in sites:
-            site_markers[site] = markers.pop(0)
+
+def get_site_markers(site_markers: dict[int, Optional[str]]) -> dict[int, str]:
+    """
+    Given a Site collection (Sites), return Sitesdict of site: marker
+    using more legible markers first.
+    """
+    markers = _get_markers_to_use()
+    if len(site_markers) > len(markers):
+        raise ValueError("Too many sites to plot with unique markers.")
+    used_markers = set(site_markers.values())
+    if None not in used_markers:
         return site_markers
+    used_markers.remove(None)
+    for m in used_markers:
+        if m in markers:
+            markers.remove(m)
 
-    raise ValueError("Too many sites to plot. ")
+    for site, marker in site_markers.items():
+        if marker is None:
+            site_markers[site] = markers.pop(0)
+
+    return site_markers
 
 
 def get_label(filt: Filter, site_name: Optional[str] = '') -> str:
@@ -154,9 +178,6 @@ def get_plot_kwargs(marker: str, filt: Filter, site_label: str = '',
                     update_label: bool = True, plot_kwargs: Optional[dict] = None) -> dict:
     if plot_kwargs is None:
         plot_kwargs = {}
-    # site_markers = get_site_markers(sites)
-    # marker = site_markers[site]
-
     plot_kwargs["marker"] = marker
     plot_kwargs['color'] = filt.plot_color
     if update_label:
@@ -171,7 +192,7 @@ def plot_abs_mag(sn: SN, ax: Optional[plt.Axes] = None,
 
     def _plot(_ax: plt.Axes, _sn: SN, _site: str, _site_label: str, _marker: str, _plot_kwargs: dict,
               update_label: bool = True) -> plt.Axes:
-        for filt in _sn.bands:
+        for filtname, filt in _sn.bands.items():
             _plot_kwargs = get_plot_kwargs(_marker, filt, _site_label, update_label, _plot_kwargs)
 
             # Skip if no data
@@ -194,15 +215,14 @@ def plot_abs_mag(sn: SN, ax: Optional[plt.Axes] = None,
         return fig, _plot(ax, sn, 'all', '', plot_kwargs.get("marker", 'o'), plot_kwargs)
 
     # plot splitting by site
-    sites = list(sn.sites.values())
-    site_markers = get_site_markers(sites)
+    sn.sites.markers = get_site_markers(sn.sites.markers)
+    sn.sites.update_markers()
     first = True
-    for site in sites:
-        marker = site_markers[site]
-        site_label = site if label_sites else ''
-        if not first:
+    for site in sn.sites.sites.values():
+        site_label = site.name if label_sites else ''
+        if not first and not label_sites:
             plot_kwargs['label'] = ''
-        ax = _plot(ax, sn, site, site_label, marker, plot_kwargs, update_label=first)
+        ax = _plot(ax, sn, site.name, site_label, site.marker, plot_kwargs, update_label=first)
         first = False
 
     return fig, ax

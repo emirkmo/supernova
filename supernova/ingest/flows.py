@@ -12,7 +12,7 @@ class FlowsConverter(BaseConverter, Converter):
     glob_str: str = 'flows_*lc.ecsv'
     jd_col: str = 'time'
     mag_col: str = 'mag_raw'
-    mag_err_col: str = 'mag_raw_err'
+    mag_err_col: str = 'mag_raw_error'
     band_col: Optional[str] = 'photfilter'
     sub_col: Optional[str] = None
     site_col: Optional[str] = 'site'
@@ -21,7 +21,7 @@ class FlowsConverter(BaseConverter, Converter):
         self.df['mag'] = self.df['mag_sub'].fillna(self.df['mag_raw'])
 
     def mag_err_convert(self) -> None:
-        self.df['mag_err'] = self.df['mag_sub_err'].fillna(self.df['mag_raw_err'])
+        self.df['mag_err'] = self.df['mag_sub_error'].fillna(self.df['mag_raw_error'])
 
     def sub_convert(self) -> None:
         self.df['sub'] = self.df["mag_sub"].apply(pd.notna)

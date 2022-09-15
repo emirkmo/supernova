@@ -1,8 +1,9 @@
 import pandas as pd
 from .converters import Converter, GenericCSVConverter, GenericECSVConverter, GenericJSONConverter
 from .readers import PathType, resolve_path, PhotReader, read_astropy_table, read_pandas_csv, read_astropy_table_as_df_with_times_as_jd
-from typing import Protocol, Type, Callable
-from ..supernova import Photometry, PhotFactory
+from .utils import NEEDED_KEYS
+from typing import Protocol, Type, Callable, Optional
+from ..supernova import Photometry, PhotFactory, MagPhot
 CollatorType = Callable[[PathType], Photometry]
 
 
@@ -36,6 +37,7 @@ class Collator:
         self.reader = reader
         self.processed_files: list[PathType] = []
         self.ignore = ignore_processed
+        self.last_used_converter: Optional[Converter] = None
 
     def __call__(self, path: PathType) -> Photometry:
         self.path = resolve_path(path)
@@ -48,9 +50,13 @@ class Collator:
         return self.reader(file)
 
     def collate(self, path: PathType) -> Photometry:
-        df = pd.concat([self.process(p) for p in path.glob(self.converter.glob_str)], ignore_index=True)
-        phot_df = self.converter(df=df).convert()
-        return PhotFactory.from_df(phot_df)
+        files = list(path.glob(self.converter.glob_str))
+        if len(files) == 0:
+            raise FileNotFoundError(f"No files found in {path} with glob {self.converter.glob_str}")
+        df = pd.concat([self.process(p) for p in files], ignore_index=True)
+        self.last_used_converter = self.converter(df=df)
+        phot_df = self.last_used_converter.convert()
+        return PhotFactory.from_df(phot_df[NEEDED_KEYS])
 
 
 collate_ecsv = Collator(GenericECSVConverter, read_astropy_table_as_df_with_times_as_jd)

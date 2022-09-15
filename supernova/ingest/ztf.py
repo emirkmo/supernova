@@ -1,13 +1,13 @@
-import enum
 from pathlib import Path
 from typing import Optional
 import warnings
 import pandas as pd
 from supernova import SN
-from supernova.data_collectors.utils import (
+from supernova.ingest.utils import (
     add_phot, update_sn, verify_columns)
 from .collators import Collator
 from supernova.supernova import Photometry, PhotFactory
+from supernova.utils import StrEnum
 from .converters import BaseConverter, Converter
 from dataclasses import dataclass
 from .readers import PathType, read_astropy_table, read_pandas_csv, times_as_jd
@@ -66,12 +66,6 @@ class ZTFPhotConverter(BaseConverter, Converter):
     def band_convert(self) -> None:
         self.df['band'] = self.df[self.band_col].str[-1]
 
-    def convert(self) -> pd.DataFrame:
-        if verify_columns(self.df):
-            return self.df
-        raise ValueError(f'Not all required keys are present in ZTFPhot'
-                         f' file: {self.df.keys()}')
-
 
 @dataclass(frozen=True)
 class ZTFPhotLimConverter(ZTFPhotConverter):
@@ -103,7 +97,7 @@ def add_ztf_photometry(sn: SN, path: str | Path) -> SN:
 # Below is Deprecated and will be removed in a future release
 
 
-class ZTFPhotSuffix(enum.StrEnum):
+class ZTFPhotSuffix(StrEnum):
     """
     Photometry from ZTF
     """

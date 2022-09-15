@@ -1,8 +1,12 @@
 from dataclasses import dataclass
 from typing import Optional, Any
-from enum import Enum
 from svo_filters import svo
 import astropy.units as u
+import numpy as np
+from dust_extinction.parameter_averages import F99
+from .utils import StrEnum
+flam = u.erg / u.cm ** 2 / u.s / u.angstrom
+Number = int | float | u.Quantity
 
 
 class SVOFilter(svo.Filter):
@@ -79,7 +83,7 @@ def get_flows_filter(band: str) -> SVOFilter:
     return FLOWS_FILTERS.get(band)
 
 
-class MagSys(Enum):
+class MagSys(StrEnum):
     AB = 'AB'
     Vega = 'Vega'
 
@@ -94,12 +98,91 @@ class Filter:
     if relevant.
     """
     name: str
-    wave_eff: u.Quantity = 0 * u.AA
+    wave_eff: Number = 0 * u.AA
     magsys: MagSys = MagSys.AB
-    zp: float = 0.0
+    zp: Number = 0.0  # zero point flux in erg/s/cm^2/A
     plot_shift: float = 0.0
     plot_color: Optional[str | tuple[float, float, float]] = None
     svo: Optional[Any] = None  # should be SVOFilter but that's broken.
+    svo_name: Optional[str] = None
+    ext: Number = 0.0  # extinction in magnitudes in band.
+
+    def __post_init__(self):
+        self.wave_eff = self.wave_eff << u.AA
+        if isinstance(self.magsys, str):
+            self.magsys = MagSys(self.magsys)
+        if isinstance(self.zp, (int, float)):
+            self.zp = self.zp << u.erg / u.cm ** 2 / u.s / u.AA
+        self.svo = self.get_svo_filter()
+        if self.svo is not None:
+            self.wave_eff = wave_eff(self.svo)
+            self.zp = zero_point_flux(self.svo, self.magsys)
+            self.svo_name = self.svo.name
+
+    def get_svo_filter(self) -> Optional[SVOFilter]:
+        if isinstance(self.svo, SVOFilter):
+            return self.svo
+        if self.svo_name is not None:
+            try:
+                return SVOFilter(self.svo_name)  # will error if you don't know what you are doing.
+            except IndexError:
+                pass
+        try:
+            return get_flows_filter(self.name)
+        except ValueError:
+            pass
+        try:
+            return SVOFilter(self.name)
+        except IndexError:
+            return None
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "wave_eff": self.wave_eff.value,
+            "magsys": self.magsys,
+            "zp": self.zp.value,
+            "plot_shift": self.plot_shift,
+            "plot_color": self.plot_color,
+            "svo_name": self.svo_name,
+            "ext": self.ext
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Filter":
+        return cls(**d)
 
     def __str__(self):
         return self.name
+
+    def set_extinction(self, ebv: float, rv: float = 3.1) -> "Filter":
+        ext = F99(Rv=rv)
+        self.ext = ext(self.wave_eff) * rv * ebv
+        return self
+        #self.ext = -2.5 * np.log10(ext.extinguish(self.wave_eff, Ebv=ebv))
+
+
+def wave_eff(svo_filt: SVOFilter, magsys='AB'):
+    """magsys has to be one of AB or Vega
+    """
+    if magsys == 'Vega':
+        return svo_filt.wave_eff.to(u.AA)
+    elif magsys != "AB":
+        raise ValueError("`magsys` has to be one of `AB` or `Vega`")
+
+    refjy = 3631.0 * u.Jy
+    jj_spec_flux = refjy.to(svo_filt.flux_units, equivalencies=u.spectral_density(svo_filt.wave_pivot))
+    top = np.trapz((svo_filt.wave ** 2 * svo_filt.throughput * jj_spec_flux), x=svo_filt.wave)
+    bot = np.trapz((svo_filt.wave * svo_filt.throughput * jj_spec_flux), x=svo_filt.wave)
+    _wave_eff = top / bot
+    return _wave_eff[0].to(u.AA)
+
+
+def zero_point_flux(svo_filt: SVOFilter, magsys='AB'):
+    if magsys == 'Vega':
+        return svo_filt.zp
+    elif magsys != "AB":
+        raise ValueError("`magsys` has to be one of `AB` or `Vega`")
+    refjy = 3631.0 * u.Jy
+    return refjy.to(flam, equivalencies=u.spectral_density(svo_filt.wave_pivot))
+

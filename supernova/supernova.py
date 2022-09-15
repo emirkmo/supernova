@@ -3,16 +3,16 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields, asdict, replace
 from pathlib import Path
-from typing import Dict, Union, Optional, Any
+from typing import Dict, Union, Optional, Any, Mapping
 import astropy.units as u
 import numpy as np
 import pandas as pd
 from astropy.coordinates import SkyCoord
-from astropy.cosmology import Cosmology, WMAP5  # type: ignore
+from astropy.cosmology import Cosmology, WMAP5, realizations, default_cosmology
 # noinspection PyProtectedMember
 from astropy.coordinates.name_resolve import NameResolveError
 from .filters import Filter, FilterSorter
-
+from .sites import Sites
 Number = int | float | u.Quantity
 
 
@@ -94,10 +94,10 @@ class BasePhot(AbstractBasePhot):
             raise ValueError("Either band or filter must be given the same length as jd."
                              f"Got band: {len(self.band)}, "
                              f"filter: {len(self.filter)}, jd: {len(self)}")
+        self.filter = self.band
 
     def calc_phases(self, phase_zero):
         self.phase = self.jd - phase_zero
-        # self.restframe = pd.Series(dtype=float)  # reset restframe phases.
 
     def restframe_phases(self, redshift):
         if self.phase is None:
@@ -168,184 +168,6 @@ class PhotFactory:
 
 
 @dataclass
-class SN:
-    phot: pd.DataFrame | Photometry
-    phases: pd.Series
-    sninfo: pd.Series
-    sites: Dict[int, str] = field(default_factory=dict)
-    sites_r: Dict[str, int] = field(init=False)
-    name: str = '20lao'
-    sub_only: bool = True
-    distance: float = None
-    bands: list[Filter] = field(default_factory=list)
-    limits: Optional[Photometry] = None
-    phase_zero: float = field(init=False, default=0)
-    redshift: float = field(init=False, default=0)
-
-    # spectral_info:
-
-    def __post_init__(self):
-        if isinstance(self.phot, pd.DataFrame):
-            self.phot = PhotFactory().from_df(self.phot)
-        self.set_sites_r()
-        self.rng = np.random.default_rng()
-        self.distance = self.sninfo.dm
-        if len(self.bands) == 0:
-            self.bands = self.make_bands(bands=list(self.phot.band.unique()))
-        if "redshift" in self.sninfo:
-            self.redshift = self.sninfo.redshift
-        if "phase_zero" in self.phases:
-            self.phase_zero = self.phases.phase_zero
-            self.set_phases()
-
-    def set_sites_r(self) -> None:
-        self.sites_r = {value: key for key, value in self.sites.items()}
-
-    def add_site(self, name: str, site_id: int = None) -> None:
-        if site_id is None:
-            site_id = self.rng.choice(set(range(100)) - set(self.sites.keys()))
-        self.sites[site_id] = name
-        self.set_sites_r()
-
-    def band(self, filt: str, site: str = 'all', return_absmag: bool = False) -> Photometry:
-        phot = self.phot.masked(self.phot.band == filt)
-        if self.sub_only:
-            phot = phot.masked(phot.sub.tolist())
-
-        if site != 'all' and site not in self.sites_r.keys():
-            raise ValueError('not a valid site name. Define first with `add_site`')
-
-        if site != 'all':
-            site_id = self.sites_r[site]
-            phot = phot.masked(phot.site == site_id)
-        if return_absmag:
-            if not isinstance(phot, AbstractMagPhot):
-                raise TypeError("Photometry must be MagPhot or Phot to return absolute magnitude.")
-            phot.mag = phot.absmag(self.distance, self.sninfo[filt + 'ext'])
-        return phot
-
-    def site(self, site: str) -> Photometry:
-        site_id = self.sites_r[site]
-        return self.phot.masked(self.phot.site == site_id)
-
-    def absmag(self, filt: str, phot: AbstractMagPhot = None):
-        if phot is None:
-            phot = self.phot
-        return phot.absmag(self.distance, self.sninfo[filt + 'ext'])
-
-    @staticmethod
-    def make_bands(bands: Optional[list[str]] = None,
-                   band_order: Optional[list[str]] = None) -> list[Filter]:
-        """
-        Creates a sorted list of Filter objects from the bands in the photometry.
-        Any unknown filters are added to the end. If band_order is given, the
-        order of the bands is set to that, otherwise default_order from
-        supernova.filters.FilterSorter is used, which is hard-coded based on wave_eff.
-        """
-        bands.sort(key=FilterSorter(band_order))
-        return [Filter(f) for f in bands]
-
-    def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
-        SNSerializer(self).to_csv(basepath)
-
-    @classmethod
-    def from_csv(cls, dirpath: Union[str, Path]):
-        return SNSerializer.from_csv(dirpath)
-
-    def set_phases(self, phase: Optional[float] = None) -> None:
-        """
-        Sets the phase of the SN to the given value.
-        Photometry objects are updated with the new phase.
-        """
-        self.phase_zero = phase if phase is not None else self.phase_zero
-        self.phot.calc_phases(self.phase_zero)
-        self.phases.loc['phase_zero'] = self.phase_zero
-
-    def restframe(self) -> 'SN':
-        """
-        Returns a copy of the SN object with the phases shifted to restframe.
-        """
-        sn = replace(self)
-        sn.phases = sn.phot.restframe_phases(self.redshift)
-        return sn
-
-    @classmethod
-    def from_phot(cls, phot: Photometry, name: str, redshift: float, sub_only: bool = False,
-                  phase_zero: Optional[float] = None, lims: Optional[Photometry] = None,
-                  **sninfo_kwargs: Any) -> "SN":
-        sninfo = sninfo_kwargs | {'redshift': redshift, 'name': name, 'sub_only': sub_only}
-        phase_zero = phot.jd.min() if phase_zero is None else phase_zero
-        return cls(
-            name=name,
-            phot=phot,
-            phases=pd.Series({'phase_zero': phase_zero}),
-            sninfo=pd.Series(sninfo),
-            sites={site: str(site) for site in phot.site.unique()},
-            sub_only=sub_only,
-            bands=SN.make_bands(bands=phot.band.unique().tolist()),
-            limits=lims
-        )
-
-
-class SNSerializer:
-    names = 'phot,phases,sninfo,sites,filters,limits'.split(',')
-
-    def __init__(self, sn: SN):
-        self.sn = sn
-
-    def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
-        sn = self.sn
-        names = SNSerializer.names
-
-        basepath = Path(basepath).joinpath(Path(f"SNClass_{sn.name}/"))
-        os.makedirs(basepath, exist_ok=True)
-
-        sn.sninfo['name'] = sn.name
-        sn.sninfo['sub_only'] = sn.sub_only
-        field_vals = [getattr(sn, f.name) for f in fields(sn) if f.name in names]
-        for name, _field in zip(names, field_vals):
-            if isinstance(_field, dict):
-                _field = pd.Series(_field)
-            if isinstance(_field, Photometry):
-                _field = pd.DataFrame.from_dict(asdict(_field))
-            if isinstance(_field, list):
-                _field = pd.Series([f.name for f in _field])
-            save_name = f"{basepath.absolute()}/{sn.name}_{name}.csv"
-            _field.to_csv(save_name, index=True)
-
-    @staticmethod
-    def from_csv(dirpath: Union[str, Path]) -> SN:
-        import glob
-        names = SNSerializer.names
-        _fields = {}
-        csvs = glob.glob(str(Path(dirpath) / '*.csv'))
-        _sn_dict = {}
-        for csv in csvs:
-            df = pd.read_csv(csv, index_col=0).squeeze("columns")
-            for name in names:
-                if name in csv:
-                    df.name = name
-                    _fields[name] = df
-
-        # Dirty trick, unneeded if we would serialize to json, but then it's less readable
-        # by astronomers.
-        _fields['sninfo'] = force_numeric_sninfo(_fields['sninfo'])
-        _fields['sites'] = _fields['sites'].to_dict()
-
-        return SN(
-            phot=_fields['phot'],
-            phases=_fields['phases'],
-            sninfo=_fields['sninfo'],
-            sites=_fields['sites'],
-            name=_fields['sninfo'].loc['name'] if 'name' in _fields['sninfo'].index else 'unknown',
-            sub_only=bool(_fields['sninfo'].sub_only) if 'sub_only' in _fields['sninfo'].index else False,
-            bands=SN.make_bands(bands=_fields['filters'].tolist(),
-                                band_order=_fields['filters'].index.tolist()) if 'filters' in _fields else [],
-            limits=_fields['limits'] if 'limits' in _fields else None
-        )
-
-
-@dataclass
 class SNInfo:
     name: str
     redshift: float = 0
@@ -355,12 +177,14 @@ class SNInfo:
 
     ebv: Number = -99
     dm: Number = -99
-    cosmology: Cosmology = WMAP5
+    cosmology: str | Cosmology = WMAP5
 
     sub_only: bool = True
     coords: SkyCoord = field(init=False, default=None)
 
     def __post_init__(self):
+        if isinstance(self.cosmology, str):
+            self.cosmology = cosmo_from_name(self.cosmology)
         self.set_coords()
         if self.dm == -99 and self.redshift != 0:
             self.dm = self.distance_modulus_from_cosmo()
@@ -418,20 +242,252 @@ class SNInfo:
         self.ebv = float(ebv)
 
     def to_series(self) -> pd.Series:
-        return pd.Series(asdict(self))
+        d = asdict(self)
+        d['cosmology'] = d['cosmology'].name
+        d.pop('coords')
+        return pd.Series(d)
+
+    def get(self, key: str, default: Optional[Any] = None) -> Any:
+        return getattr(self, key, default)
+
+    def __contains__(self, item):
+        return hasattr(self, item)
+
+    @classmethod
+    def from_dict(cls, d: Mapping) -> "SNInfo":
+        return cls(**{k: v for k, v in d.items() if k in [f.name for f in fields(cls)]})
 
     @classmethod
     def from_csv(cls, csv: Path) -> "SNInfo":
         df = pd.read_csv(csv, index_col=0).squeeze("columns")
         df = force_numeric_sninfo(df)
-        return cls(**df.to_dict())
+        return cls.from_dict(df.to_dict())
+
+
+@dataclass
+class SN:
+    phot: pd.DataFrame | Photometry
+    phases: pd.Series
+    sninfo: pd.Series | SNInfo
+    sites: Sites = field(default_factory=Sites)
+    # sites_r: Dict[str, int] = field(init=False)
+    name: str = '20lao'
+    sub_only: bool = True
+    distance: float = 0.  # distance modulus. 0 means not set.
+    bands: dict[str, Filter] = field(default_factory=dict)
+    limits: Optional[pd.DataFrame | Photometry] = None
+    phase_zero: float = field(init=False, default=0)
+    redshift: float = field(init=False, default=0)
+
+    # spectral_info:
+
+    def __post_init__(self):
+        if isinstance(self.phot, pd.DataFrame):
+            self.phot = PhotFactory().from_df(self.phot)
+        if isinstance(self.limits, pd.DataFrame):
+            self.limits = PhotFactory().from_df(self.limits)
+        # self.set_sites_r()
+        self.rng = np.random.default_rng()
+        self.distance = self.sninfo.get('dm', 0.)
+        if len(self.bands) == 0:
+            self.bands = self.make_bands(bands=list(self.phot.band.unique()), ebv=self.sninfo.ebv)
+        if "redshift" in self.sninfo:
+            self.redshift = self.sninfo.redshift
+        if "phase_zero" in self.phases:
+            self.phase_zero = self.phases.phase_zero
+            self.set_phases()
+
+    def add_site(self, name: str, site_id: Optional[int] = None, **sitekwargs) -> None:
+        if site_id is not None:
+            sitekwargs['id'] = site_id
+        self.sites.add_site(name, **sitekwargs)
+
+    def band(self, filt: str, site: str = 'all', return_absmag: bool = False, lims: bool = False) -> Photometry:
+        phot = self.phot.masked(self.phot.band == filt) if not lims else self.limits.masked(self.limits.band == filt)
+        if self.sub_only:
+            phot = phot.masked(phot.sub.tolist())
+
+        if site != 'all' and site not in self.sites:
+            raise ValueError('not a valid site name. Define first with `add_site`')
+
+        if site != 'all':
+            site_id = self.sites[site].id
+            phot = phot.masked(phot.site == site_id)
+        if return_absmag:
+            if not isinstance(phot, AbstractMagPhot):
+                raise TypeError("Photometry must be MagPhot or Phot to return absolute magnitude.")
+            phot.mag = phot.absmag(self.distance, self.bands[filt].ext)
+        return phot
+
+    def site(self, site: str) -> Photometry:
+        site_id = self.sites[site].id
+        return self.phot.masked(self.phot.site == site_id)
+
+    def absmag(self, filt: str, phot: AbstractMagPhot = None):
+        if phot is None:
+            phot = self.phot
+        return phot.absmag(self.distance, self.bands[filt].ext)
+
+    @staticmethod
+    def make_bands(bands: Optional[list[str]] = None,
+                   band_order: Optional[list[str]] = None,
+                   ebv: float = 0.0) -> dict[str, Filter]:
+        """
+        Creates a sorted list of Filter objects from the bands in the photometry.
+        Any unknown filters are added to the end. If band_order is given, the
+        order of the bands is set to that, otherwise default_order from
+        supernova.filters.FilterSorter is used, which is hard-coded based on wave_eff.
+        """
+        bands.sort(key=FilterSorter(band_order))
+        return {b: filt if filt.svo is None else filt.set_extinction(ebv) for b in bands if (filt := Filter(b))}
+        # for f in bands:
+        #     filt = Filter(f)
+        #     if filt.svo is not None:
+        #         filt.set_extinction(0.2)
+        #     yield filt
+
+    def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
+        SNSerializer(self).to_csv(basepath)
+
+    @classmethod
+    def from_csv(cls, dirpath: Union[str, Path]):
+        return SNSerializer.from_csv(dirpath)
+
+    def set_phases(self, phase: Optional[float] = None) -> None:
+        """
+        Sets the phase of the SN to the given value.
+        Photometry objects are updated with the new phase.
+        """
+        self.phase_zero = phase if phase is not None else self.phase_zero
+        self.phot.calc_phases(self.phase_zero)
+        self.phases.loc['phase_zero'] = self.phase_zero
+        if self.limits is not None:
+            self.limits.calc_phases(self.phase_zero)
+
+    def restframe(self) -> 'SN':
+        """
+        Returns a copy of the SN object with the phases shifted to restframe.
+        """
+        sn = replace(self)
+        sn.set_phases()
+        sn.phot.phase = sn.phot.restframe_phases(self.redshift)
+        if self.limits is not None:
+            sn.limits.phase = sn.limits.restframe_phases(self.redshift)
+        return sn
+
+    @classmethod
+    def from_phot(cls, phot: Photometry, name: str, redshift: float, sub_only: bool = False,
+                  phase_zero: Optional[float] = None, lims: Optional[Photometry] = None,
+                  sninfo: Optional[SNInfo] = None, sites: Optional[Sites] = None, **sninfo_kwargs: Any) -> "SN":
+        if sninfo is not None:
+            sninfo.redshift = redshift
+            sninfo.name = name
+        else:
+            sninfo = SNInfo(redshift=redshift, name=name, sub_only=sub_only, **sninfo_kwargs)
+
+        if phase_zero is None:
+            phase_zero = phot.jd.min()
+            warnings.warn(f"`phase_zero` not given. Setting to first photometry point: {phase_zero}."
+                          " If this is not correct, set `phase_zero` manually by calling "
+                          "`set_phases(<correct_phase_zero>)` on the SN object.")
+
+        return cls(
+            name=name,
+            phot=phot,
+            phases=pd.Series({'phase_zero': phase_zero}),
+            sninfo=sninfo.to_series(),
+            sites=sites if sites is not None else Sites.from_sitemap({site: str(site) for site in phot.site.unique()}),
+            sub_only=sub_only,
+            bands=SN.make_bands(bands=phot.band.unique().tolist(), ebv=sninfo.ebv),
+            limits=lims
+        )
+
+
+class SNSerializer:
+    names = 'phot,phases,sninfo,sites,bands,limits'.split(',')
+
+    def __init__(self, sn: SN):
+        self.sn = sn
+
+    def to_csv(self, basepath: Union[str, Path] = Path('../')) -> None:
+        sn = self.sn
+        names = SNSerializer.names
+
+        basepath = Path(basepath).joinpath(Path(f"SNClass_{sn.name}/"))
+        os.makedirs(basepath, exist_ok=True)
+
+        sn.sninfo['name'] = sn.name
+        sn.sninfo['sub_only'] = sn.sub_only
+        field_vals = {f.name: getattr(sn, f.name) for f in fields(sn) if f.name in names}
+        for name, _field in field_vals.items():
+            if name == 'bands':
+                _field = pd.DataFrame([f.to_dict() for f in _field.values()])
+            if isinstance(_field, dict):
+                _field = pd.Series(_field)
+            if isinstance(_field, Photometry):
+                _field = pd.DataFrame.from_dict(asdict(_field))
+            if isinstance(_field, Sites):
+                _field = _field.to_df()
+            if isinstance(_field, list):
+                _field = pd.Series([f.name for f in _field])
+            if isinstance(_field, SNInfo):
+                _field = _field.to_series()
+            save_name = f"{basepath.absolute()}/{sn.name}_{name}.csv"
+            _field.to_csv(save_name, index=True)
+
+    @staticmethod
+    def from_csv(dirpath: Union[str, Path]) -> SN:
+        import glob
+        names = SNSerializer.names
+        _fields = {}
+        csvs = glob.glob(str(Path(dirpath) / '*.csv'))
+        _sn_dict = {}
+        for csv in csvs:
+            df = pd.read_csv(csv, index_col=0).squeeze("columns")
+            for name in names:
+                if name in csv:
+                    df.name = name
+                    _fields[name] = df
+
+        # Dirty trick, unneeded if we would serialize to json, but then it's less readable
+        # by astronomers.
+        _fields['sninfo'] = force_numeric_sninfo(_fields['sninfo'])
+        _fields['sites'] = Sites.from_df(_fields['sites'])
+        if isinstance(_fields['bands'], pd.Series):
+            _fields['bands'] = SN.make_bands(
+                bands=_fields['bands'].tolist(),
+                band_order=_fields['bands'].index.tolist(),
+                ebv=_fields['sninfo'].ebv) if 'bands' in _fields else {}
+
+        elif isinstance(_fields['bands'], pd.DataFrame):
+            _bands_dict = _fields['bands'].to_dict('index')
+            _fields['bands'] = {v['name']: Filter.from_dict(v) for v in _bands_dict.values()}
+        else:
+            _fields['bands'] = {}
+        sninfo = SNInfo.from_dict(_fields['sninfo'].to_dict())
+        return SN(
+            phot=_fields['phot'],
+            phases=_fields.get('phases', pd.Series({'phase_zero': sninfo.phase_zero})),
+            sninfo=sninfo,
+            sites=_fields['sites'],
+            name=sninfo.name,
+            sub_only=sninfo.sub_only,
+            bands=_fields['bands'],
+            limits=_fields['limits'] if 'limits' in _fields else None
+        )
+
+
+def cosmo_from_name(name: str) -> Cosmology:
+    if name in realizations.__all__:
+        return getattr(realizations, name)
+    warnings.warn(f"Could not find cosmology {name}. Using WMAP5 instead.")
+    return WMAP5
 
 
 def get_extinction_irsa(coords: SkyCoord) -> float:
     from astroquery.irsa_dust import IrsaDust
     table = IrsaDust.get_query_table(coords, section='ebv')
     return table["ext SandF ref"][0]
-
 
 def force_numeric_sninfo(sninfo: pd.Series) -> pd.Series:
     _sninfo = pd.to_numeric(sninfo, errors='coerce')

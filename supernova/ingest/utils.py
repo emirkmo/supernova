@@ -40,13 +40,13 @@ def create_sn(name: str, dir_path: PathType, collator: Collator,
 
 def update_sn(sn: SN, phot: Photometry) -> SN:
     # Add new sites.
-    new_sites = set(phot.sites.unique()) - set(sn.sites.keys())
+    new_sites = set(phot.site.unique()) - set(sn.sites.site_ids)
     if new_sites != set():
         for site in new_sites:
             sn.add_site(name=str(site), site_id=site)
 
     # Add new bands.
-    sn.bands = sn.make_bands(list(sn.phot.band.unique()))
+    sn.bands = sn.make_bands(list(sn.phot.band.unique()), ebv=sn.sninfo.ebv)
     sn.set_phases()  # also recalculates the old phases.
     return sn
 

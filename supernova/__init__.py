@@ -6,4 +6,3 @@ from .version import version_info as __version_info__
 from .supernova import SN, MagPhot, FluxPhot
 from .interp import *
 from .filters import *
-from .sn_data import lao
