@@ -13,6 +13,8 @@ class BoloType(StrEnum):
 def bolo_weighted_xyz(sn: SN,
                       band: BoloType = BoloType.quasi) -> tuple[NDArray[float], NDArray[float], NDArray[float]]:
     """Get the bolometric luminosity weighted x, y, z coordinates."""
-    phot = sn.band(band)
+    sn.set_phases()
+    snr = sn.restframe()
+    phot = snr.band(band)
     weights = 1./phot.lum_err.values
-    return phot.jd.values, phot.lum.values, weights
+    return phot.phase.values, phot.lum.values, weights

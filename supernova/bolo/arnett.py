@@ -7,6 +7,7 @@ from lmfit import minimize, Parameters, report_fit
 from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike, NDArray
 
+from supernova import StrEnum
 
 # Conversion Factors
 days = 86400  # seconds
@@ -199,23 +200,37 @@ class ArnettParams:
         return params
 
 
+class LMFitMethod(StrEnum):
+    nelder = 'nelder'  # Nelder-Mead
+    leastsq = 'leastsq'  # Levenberg-Marquardt
+    least_squares = 'least_squares'  #  Trust Region Reflective
+    bfgs = 'bfgs'  # Broyden-Fletcher-Goldfarb-Shanno
+    brute = 'brute'  # brute force
+    lbfgsb = 'lbfgsb'  # L-BFGS-B
+    trust_constr = 'trust_constr'  # Trust Region Constrained
+    slsqp = 'slsqp'  # Sequential Least SQuares Programming
+    emcee = 'emcee'  # Markov Chain Monte Carlo
+
+
 def fit_arnett(xdata: ArrayLike, ydata: ArrayLike, weights: Optional[ArrayLike] = None,
-               arnett_params: ArnettParams = ArnettParams(1.0, 15, 0.0),
-               regularization: float = 0) -> tuple[MinimizerResult, MinimizerResult]:
+               arnett_params: ArnettParams = ArnettParams(1.0, 15, 0.0), regularization: float = 0,
+               fit_emcee: bool = True, method: LMFitMethod | str = LMFitMethod.nelder) -> tuple[MinimizerResult, Optional[MinimizerResult]]:
+    method = LMFitMethod(method)
     params = arnett_params.params
     fitter = RegularizedFit(params, ['M_ej', 'delta'], lamb=regularization)
     fit_result = minimize(fit_func, params, args=(xdata, ydata),
-                          kws={'weights': weights}, method='nelder', nan_policy='omit',
+                          kws={'weights': weights}, method=method, nan_policy='omit',
                           iter_cb=fitter.set_regularization,
                           reduce_fcn=fitter.regularized_least_squares_cost)
-
-    # Explore posterior using emcee
-    # fit_result.params.add('__lnsigma', value=np.log(0.1), min=np.log(0.001), max=np.log(2))
-    is_weighted = weights is not None
-    emcee_result = minimize(fit_func, fit_result.params, args=(xdata, ydata),
-                            kws={'weights': weights}, method='emcee',
-                            nan_policy='omit', is_weighted=is_weighted, progress=False,
-                            burn=300, steps=1000, thin=20,
-                            workers=max(min(multiprocessing.cpu_count()//2 + 3, 10), 1))
+    emcee_result = None
+    if fit_emcee:
+        # Explore posterior using emcee
+        # fit_result.params.add('__lnsigma', value=np.log(0.1), min=np.log(0.001), max=np.log(2))
+        is_weighted = weights is not None
+        emcee_result = minimize(fit_func, fit_result.params, args=(xdata, ydata),
+                                kws={'weights': weights}, method='emcee',
+                                nan_policy='omit', is_weighted=is_weighted, progress=False,
+                                burn=300, steps=1000, thin=20,
+                                workers=max(min(multiprocessing.cpu_count()//2 + 3, 10), 1))
 
     return fit_result, emcee_result
