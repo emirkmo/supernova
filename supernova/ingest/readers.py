@@ -4,6 +4,7 @@ from astropy.time import Time
 import pandas as pd
 from pathlib import Path
 import warnings
+
 PathType = Path | str
 PhotReader = Callable[[PathType], pd.DataFrame]
 
@@ -47,9 +48,8 @@ def get_astropy_times_as_jd(at: Table) -> Table:
 
 
 def detect_mjd_or_jd(col: Sequence) -> Optional[str]:
-
     def mjd(sval: str) -> bool:
-        return len(sval) == 5 and sval[0] in ['5','6']
+        return len(sval) == 5 and sval[0] in ['5', '6']
 
     def jd(sval: str) -> bool:
         return len(sval) == 7 and sval.startswith("245")
@@ -81,6 +81,3 @@ def times_as_jd(at: Table) -> Table:
         if isinstance(col, Time):
             at[name] = col.jd
     return at
-
-
-

@@ -15,13 +15,7 @@ def collate_phot(path: PathType, converter: Type[Converter], reader: PhotReader)
     return PhotFactory.from_df(phot_df)
 
 
-def add_phot(sn_phot: Photometry, new_phot: Photometry) -> Photometry:
-    """
-    Add photometry to a Supernova.
-    """
-    df = pd.concat([sn_phot.as_dataframe(), new_phot.as_dataframe()], ignore_index=True)
-    df = df[sn_phot.as_dataframe().columns]
-    return PhotFactory.from_df(df)
+add_phot = PhotFactory.add_phot
 
 
 def create_sn(name: str, dir_path: PathType, collator: Collator,
@@ -55,7 +49,3 @@ def verify_columns(df: pd.DataFrame, keys: Optional[Sequence['str']] = None) -> 
     if keys is None:
         keys = NEEDED_KEYS
     return set(keys) - set(df.columns) == set()
-
-
-
-

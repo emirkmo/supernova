@@ -1,8 +1,9 @@
 from dataclasses import dataclass, asdict, field, fields
-from typing import TypeVar, Mapping, Optional, Collection
-from typing_extensions import Unpack
+from typing import TypeVar, Mapping, Optional
+
 import numpy as np
 import pandas as pd
+from typing_extensions import Unpack
 
 SiteType = TypeVar('SiteType', int, str)
 SiteDict = Mapping[int, str]
@@ -43,6 +44,9 @@ class Sites:
     def __contains__(self, site: SiteType) -> bool:
         return site in self.site_names or site in self.site_ids
 
+    def __iter__(self):
+        yield from self.sites.values()
+
     def _refresh_sites(self):
         self.site_names = [site.name for site in self.sites.values()]
         self.site_ids = [site.id for site in self.sites.values()]
@@ -69,13 +73,19 @@ class Sites:
         return len(self.site_ids)
 
     def generate_id(self):
-        return self.rng.choice(set(range(100)) - set(self.site_ids))
+        return self.rng.choice(list(set(range(100)) - set(self.site_ids)))
 
-    def add_site(self, name: str = 'Unknown', **site_kwargs: Unpack[Site]) -> None:
+    def add_site(self, name: str = 'Unknown', **site_kwargs: Unpack[Site]) -> Site:
         if site_kwargs.get('id', None) is None:
             site_kwargs['id'] = self.generate_id()
         self.sites[site_kwargs['id']] = Site(name=name, **site_kwargs)
         self._refresh_sites()
+        return self.sites[site_kwargs['id']]
+
+    def remove_site(self, site: Site) -> Site:
+        rmd_site = self.sites.pop(site.id)
+        self._refresh_sites()
+        return rmd_site
 
     @classmethod
     def from_sitemap(cls, sitemap: SiteDict) -> 'Sites':

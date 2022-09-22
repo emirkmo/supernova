@@ -1,9 +1,13 @@
-import pandas as pd
-from .converters import Converter, GenericCSVConverter, GenericECSVConverter, GenericJSONConverter
-from .readers import PathType, resolve_path, PhotReader, read_astropy_table, read_pandas_csv, read_astropy_table_as_df_with_times_as_jd
-from .utils import NEEDED_KEYS
 from typing import Protocol, Type, Callable, Optional
-from ..supernova import Photometry, PhotFactory, MagPhot
+
+import pandas as pd
+
+from .converters import Converter, GenericCSVConverter, GenericECSVConverter
+from .readers import (PathType, resolve_path, PhotReader, read_pandas_csv,
+                      read_astropy_table_as_df_with_times_as_jd)
+from .utils import NEEDED_KEYS
+from ..supernova import Photometry, PhotFactory
+
 CollatorType = Callable[[PathType], Photometry]
 
 

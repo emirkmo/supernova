@@ -1,19 +1,68 @@
 import os
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields, asdict, replace
+from dataclasses import dataclass, field, fields, asdict, replace, Field
 from pathlib import Path
-from typing import Dict, Union, Optional, Any, Mapping
+from typing import Union, Optional, Any, Mapping, TypeVar
 import astropy.units as u
 import numpy as np
+from numpy.typing import DTypeLike
 import pandas as pd
 from astropy.coordinates import SkyCoord
-from astropy.cosmology import Cosmology, WMAP5, realizations, default_cosmology
+from astropy.cosmology import Cosmology, WMAP5, realizations  # type: ignore
 # noinspection PyProtectedMember
 from astropy.coordinates.name_resolve import NameResolveError
-from .filters import Filter, FilterSorter
+from .utils import Number
+from .filters import Filter, FilterSorter, PISCO_FILTER_PATH, SVOFilter
 from .sites import Sites
-Number = int | float | u.Quantity
+
+ArrayLike = TypeVar("ArrayLike", np.ndarray, Number, pd.Series)
+
+
+@dataclass
+class AbstractBasePhot(ABC):
+    """Abstract Photometry dataclass"""
+    jd: pd.Series
+    band: pd.Series
+    filter: pd.Series
+    phase: pd.Series
+    sub: pd.Series
+    site: pd.Series
+
+    # restframe: pd.Series
+
+    def __post_init__(self):
+        if self.__class__ == AbstractBasePhot:
+            raise TypeError("Cannot instantiate abstract class.")
+
+    @abstractmethod
+    def _fill_missing(self) -> None:
+        pass
+
+    @abstractmethod
+    def calc_phases(self, phase_zero: Number) -> None:
+        pass
+
+    @abstractmethod
+    def restframe_phases(self, redshift: Number) -> pd.Series:
+        pass
+
+    @abstractmethod
+    def masked(self, cond: list) -> 'AbstractPhotometry':
+        pass
+
+    @abstractmethod
+    def as_dataframe(self) -> pd.DataFrame:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def from_dict(cls, d: dict) -> 'AbstractPhotometry':
+        pass
+
+    @abstractmethod
+    def __len__(self):
+        pass
 
 
 @dataclass
@@ -41,36 +90,31 @@ class AbstractFluxPhot(ABC):
 
 
 @dataclass
-class AbstractBasePhot(ABC):
-    """Abstract Photometry dataclass"""
-    jd: pd.Series
-    band: pd.Series
-    filter: pd.Series
-    phase: pd.Series
-    sub: pd.Series
-    site: pd.Series
+class AbstractPhot(ABC):
+    flux: pd.Series
+    flux_err: pd.Series
+    mag: pd.Series
+    mag_err: pd.Series
 
-    # restframe: pd.Series
 
-    def __post_init__(self):
-        if self.__class__ == AbstractBasePhot:
-            raise TypeError("Cannot instantiate abstract class.")
+@dataclass
+class AbstractLumPhot(ABC):
+    lum: pd.Series
+    lum_err: pd.Series
 
-    @abstractmethod
-    def calc_phases(self, phase_zero: Number) -> None:
-        pass
 
-    @abstractmethod
-    def restframe_phases(self, redshift: Number) -> pd.Series:
-        pass
+@dataclass
+class AbstractBBLumPhot(ABC):
+    radius: pd.Series
+    radius_err: pd.Series
+    temp: pd.Series
+    temp_err: pd.Series
 
-    @abstractmethod
-    def masked(self, cond: list) -> 'Photometry':
-        pass
 
-    @abstractmethod
-    def as_dataframe(self) -> pd.DataFrame:
-        pass
+@dataclass
+class AbstractPhotometry(AbstractMagPhot, AbstractFluxPhot,
+                         AbstractLumPhot, AbstractBBLumPhot, AbstractBasePhot, ABC):
+    pass
 
 
 @dataclass
@@ -95,6 +139,21 @@ class BasePhot(AbstractBasePhot):
                              f"Got band: {len(self.band)}, "
                              f"filter: {len(self.filter)}, jd: {len(self)}")
         self.filter = self.band
+        # @TODO: remove this try/except after tests.
+        try:
+            self._fill_missing()
+        except Exception as e:
+            warnings.warn(f"Could not fill missing values of {self.__class__}: {e}")
+
+    def _fill_missing(self) -> None:
+        if len(self) == 0:
+            return
+        for _field in fields(self):
+
+            if len(getattr(self, _field.name)) == 0:
+                dtype, default = get_field_dtype_default(_field)
+                setattr(self, _field.name,
+                        pd.Series([default] * len(self), dtype=dtype, name=_field.name))
 
     def calc_phases(self, phase_zero):
         self.phase = self.jd - phase_zero
@@ -136,16 +195,62 @@ class FluxPhot(BasePhot, AbstractFluxPhot):
     flux: pd.Series = field(default=pd.Series(dtype=float))
     flux_err: pd.Series = field(default=pd.Series(dtype=float))
 
+    @staticmethod
+    def mag_to_flux(mag: ArrayLike, filt: Filter) -> ArrayLike:
+        return 10 ** (mag / -2.5) * filt.zp
+
+    @staticmethod
+    def mag_to_flux_err(mag_err: ArrayLike, flux: ArrayLike) -> ArrayLike:
+        return 2.303 * mag_err * flux
+
 
 @dataclass
-class Phot(FluxPhot, MagPhot):
+class Phot(FluxPhot, MagPhot, AbstractPhot):
     mag: pd.Series = field(default=pd.Series(dtype=float))
     mag_err: pd.Series = field(default=pd.Series(dtype=float))
     flux: pd.Series = field(default=pd.Series(dtype=float))
     flux_err: pd.Series = field(default=pd.Series(dtype=float))
 
+    @classmethod
+    def from_magphot(cls, magphot: AbstractMagPhot, band: Filter) -> 'Phot':
+        flux = cls.mag_to_flux(magphot.mag, band)
+        flux_err = cls.mag_to_flux_err(magphot.mag_err, flux)
+        return cls.from_dict(asdict(magphot) | {"flux": flux, "flux_err": flux_err})
 
-Photometry = FluxPhot | MagPhot | Phot
+
+@dataclass
+class LumPhot(Phot, AbstractLumPhot):
+    lum: pd.Series = field(default=pd.Series(dtype=float))
+    lum_err: pd.Series = field(default=pd.Series(dtype=float))
+
+    @classmethod
+    def empty_from_phot(cls, phot: AbstractPhotometry) -> 'LumPhot':
+        """
+        Create a LumPhot object from a Phot object with empty luminosity and luminosity error
+        """
+        l_empty = pd.Series(index=phot.jd, data=np.ones_like(phot.jd) * np.nan)
+        return cls.from_dict(asdict(phot) | {"lum": l_empty, "lum_err": l_empty})
+
+
+@dataclass
+class BBLumPhot(LumPhot, AbstractBBLumPhot):
+    radius: pd.Series = field(default=pd.Series(dtype=float))
+    radius_err: pd.Series = field(default=pd.Series(dtype=float))
+    temp: pd.Series = field(default=pd.Series(dtype=float))
+    temp_err: pd.Series = field(default=pd.Series(dtype=float))
+
+    @classmethod
+    def empty_from_phot(cls, phot: Phot) -> 'BBLumPhot':
+        """
+        Create a LumPhot object from a Phot object with empty luminosity and luminosity error
+        """
+        l_empty = pd.Series(index=phot.jd, data=np.ones_like(phot.jd) * np.nan)
+        d = {"lum": l_empty, "lum_err": l_empty, 'radius': l_empty,
+             'radius_err': l_empty, 'temp': l_empty, 'temp_err': l_empty}
+        return cls.from_dict(asdict(phot) | d)
+
+
+Photometry = FluxPhot | MagPhot | Phot | LumPhot | BBLumPhot
 
 
 class PhotFactory:
@@ -153,11 +258,20 @@ class PhotFactory:
     Factory class to create Photometry objects.
     """
 
+    def __init__(self, sn_phot: Photometry):
+        self.sn_phot = sn_phot
+
     @staticmethod
     def from_df(df: pd.DataFrame) -> Photometry:
         d = df.to_dict('series')
         mag = 'mag' in d
         flux = 'flux' in d
+        lum = 'lum' in d
+        bb = 'radius' in d and 'temp' in d
+        if bb:
+            return BBLumPhot.from_dict(d)
+        if lum:
+            return LumPhot.from_dict(d)
         if mag and flux:
             return Phot.from_dict(d)
         elif mag:
@@ -165,6 +279,30 @@ class PhotFactory:
         elif flux:
             return FluxPhot.from_dict(d)
         raise ValueError("df must contain either 'mag' or 'flux' columns")
+
+    @classmethod
+    def add_phot(cls, sn_phot: Photometry, new_phot: Photometry) -> Photometry:
+        """
+        Add photometry to a Supernova.
+        """
+        df = pd.concat([sn_phot.as_dataframe(), new_phot.as_dataframe()], ignore_index=True)
+        df = df[sn_phot.as_dataframe().columns.drop('filter')]
+        return cls.from_df(df)
+
+    def concat_phot(self, new_phot: Photometry) -> Photometry:
+        """
+        Add photometry to a Supernova.
+        """
+        self.sn_phot = self.add_phot(self.sn_phot, new_phot)
+        return self.sn_phot
+
+    def extend_phot(self, new_phot_type: type[Photometry]) -> Photometry:
+        """
+        Extend the photometry of a Supernova to a new type.
+        """
+        d = self.sn_phot.as_dataframe().to_dict('series')
+        self.sn_phot = new_phot_type.from_dict(d)
+        return self.sn_phot
 
 
 @dataclass
@@ -263,6 +401,12 @@ class SNInfo:
         df = force_numeric_sninfo(df)
         return cls.from_dict(df.to_dict())
 
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
 
 @dataclass
 class SN:
@@ -283,9 +427,9 @@ class SN:
 
     def __post_init__(self):
         if isinstance(self.phot, pd.DataFrame):
-            self.phot = PhotFactory().from_df(self.phot)
+            self.phot = PhotFactory.from_df(self.phot)
         if isinstance(self.limits, pd.DataFrame):
-            self.limits = PhotFactory().from_df(self.limits)
+            self.limits = PhotFactory.from_df(self.limits)
         # self.set_sites_r()
         self.rng = np.random.default_rng()
         self.distance = self.sninfo.get('dm', 0.)
@@ -302,7 +446,8 @@ class SN:
             sitekwargs['id'] = site_id
         self.sites.add_site(name, **sitekwargs)
 
-    def band(self, filt: str, site: str = 'all', return_absmag: bool = False, lims: bool = False) -> Photometry:
+    def band(self, filt: str, site: str = 'all', return_absmag: bool = False,
+             lims: bool = False, flux: bool = False) -> Photometry:
         phot = self.phot.masked(self.phot.band == filt) if not lims else self.limits.masked(self.limits.band == filt)
         if self.sub_only:
             phot = phot.masked(phot.sub.tolist())
@@ -317,6 +462,10 @@ class SN:
             if not isinstance(phot, AbstractMagPhot):
                 raise TypeError("Photometry must be MagPhot or Phot to return absolute magnitude.")
             phot.mag = phot.absmag(self.distance, self.bands[filt].ext)
+        if flux:
+            if isinstance(phot, FluxPhot):
+                return phot
+            phot = Phot.from_magphot(phot, self.bands[filt])
         return phot
 
     def site(self, site: str) -> Photometry:
@@ -375,6 +524,19 @@ class SN:
             sn.limits.phase = sn.limits.restframe_phases(self.redshift)
         return sn
 
+    def calc_flux(self) -> None:
+        """
+        Calculates the fluxes of the photometry in each band
+        and converts MagPhot to Phot with fluxes.
+        """
+        if not isinstance(self.phot, FluxPhot):
+            fac = PhotFactory(sn_phot=Phot())
+            for band in self.bands:
+                fluxphot = self.band(band, flux=True)
+                fluxphot = fluxphot.masked(fluxphot.flux.notna().tolist())
+                fac.concat_phot(fluxphot)
+            self.phot = fac.sn_phot
+
     @classmethod
     def from_phot(cls, phot: Photometry, name: str, redshift: float, sub_only: bool = False,
                   phase_zero: Optional[float] = None, lims: Optional[Photometry] = None,
@@ -402,6 +564,9 @@ class SN:
             limits=lims
         )
 
+    def copy(self):
+        return replace(self)
+
 
 class SNSerializer:
     names = 'phot,phases,sninfo,sites,bands,limits'.split(',')
@@ -422,6 +587,7 @@ class SNSerializer:
         for name, _field in field_vals.items():
             if name == 'bands':
                 _field = pd.DataFrame([f.to_dict() for f in _field.values()])
+
             if isinstance(_field, dict):
                 _field = pd.Series(_field)
             if isinstance(_field, Photometry):
@@ -441,12 +607,15 @@ class SNSerializer:
         names = SNSerializer.names
         _fields = {}
         csvs = glob.glob(str(Path(dirpath) / '*.csv'))
+        if len(csvs) < 2:
+            raise FileNotFoundError("Only found: ", csvs)
         _sn_dict = {}
         for csv in csvs:
             df = pd.read_csv(csv, index_col=0).squeeze("columns")
             for name in names:
                 if name in csv:
-                    df.name = name
+                    if name in ['bands', 'sites']:
+                        df.replace({np.nan: None, 'nan': None, 'NAN': None, 'NaN': None}, inplace=True)
                     _fields[name] = df
 
         # Dirty trick, unneeded if we would serialize to json, but then it's less readable
@@ -465,6 +634,8 @@ class SNSerializer:
         else:
             _fields['bands'] = {}
         sninfo = SNInfo.from_dict(_fields['sninfo'].to_dict())
+        if isinstance(sninfo.sub_only, str):
+            sninfo.sub_only = sninfo.sub_only == 'True'
         return SN(
             phot=_fields['phot'],
             phases=_fields.get('phases', pd.Series({'phase_zero': sninfo.phase_zero})),
@@ -475,6 +646,72 @@ class SNSerializer:
             bands=_fields['bands'],
             limits=_fields['limits'] if 'limits' in _fields else None
         )
+
+    @staticmethod
+    def add_piscola_magsys(name: str, mag: float = 0, file: str = 'ab_sys_zps.dat',
+                           verbose: bool = True) -> None:
+        file = PISCO_FILTER_PATH.parent / 'mag_sys' / file
+        filt_names, _ = np.loadtxt(file, dtype=str).T
+        if name in filt_names:
+            warnings.warn(f"Filter {name} already in {file}")
+            return
+        with open(file, 'a') as f:
+            f.write("\n")
+            f.write(f"{name} {mag}")
+        if verbose:
+            print(f"Added {name} to {file}")
+
+    def save_piscola_filters(self, sites: bool = True):
+        for band in self.sn.bands.values():
+            if not isinstance(band.svo, SVOFilter):
+                warnings.warn(f"Filter {band.name} does not have an SVO Filter defined."
+                              f" Skipping.")
+                continue
+            if sites:
+                site_names = self.sn.sites.site_names
+            else:
+                site_names = ['all']
+            for site in site_names:
+                path = PISCO_FILTER_PATH / site
+                path.mkdir(exist_ok=True)
+                path = path / f"{site}_{band.name}.dat"
+                if not path.is_file():
+                    band.svo.write_filter(path)
+                    self.add_piscola_magsys(name=f"{site}_{band.name}")
+
+    def make_piscola_file(self, base_directory: Path, sites: bool = False) -> Path:
+        """
+        Make a piscola file for the SN.
+        """
+        self.save_piscola_filters(sites=sites)
+        sn = self.sn
+        sn.calc_flux()
+        line0 = "name z ra dec\n"
+        line1 = f"{sn.name} {sn.sninfo.redshift} {sn.sninfo.ra} {sn.sninfo.dec}"
+        line2 = "time flux flux_err zp band mag_sys"
+
+        site_keys = "all"
+        if sites:
+            site_keys = sn.phot.site.apply(lambda l: sn.sites[l].name)
+        zps = sn.phot.band.apply(lambda l: np.log10(sn.bands[l].zp.value) * 2.5)
+
+        df = pd.DataFrame(columns=line2.split())
+        df['time'] = sn.phot.jd
+        df['flux'] = sn.phot.flux
+        df['flux_err'] = sn.phot.flux_err
+        df['zp'] = zps
+        df['band'] = site_keys + '_' + sn.phot.band
+        df['mag_sys'] = 'AB'  # Dummy, not needed for fit
+
+        path = base_directory / f"{sn.name}.dat"
+        with open(path, 'w') as piscofile:
+            piscofile.write(line0)
+            piscofile.write(line1)
+            piscofile.write('\n')
+            piscofile.write(line2)
+            piscofile.write('\n')
+            piscofile.write(df.to_string(header=False, index=False))
+        return path
 
 
 def cosmo_from_name(name: str) -> Cosmology:
@@ -489,7 +726,23 @@ def get_extinction_irsa(coords: SkyCoord) -> float:
     table = IrsaDust.get_query_table(coords, section='ebv')
     return table["ext SandF ref"][0]
 
+
 def force_numeric_sninfo(sninfo: pd.Series) -> pd.Series:
     _sninfo = pd.to_numeric(sninfo, errors='coerce')
     _sninfo = _sninfo.mask(_sninfo.isna(), sninfo)
     return _sninfo
+
+
+def get_field_dtype_default(_field: Field) -> tuple[DTypeLike, [float | int | bool | str]]:
+    dtype = float
+    default = np.nan
+    if _field.default.dtype == object:
+        dtype = str
+        default = ""
+    if _field.default.dtype == bool:
+        dtype = bool
+        default = True
+    if _field.default.dtype == int:
+        dtype = int
+        default = -99
+    return dtype, default

@@ -22,19 +22,31 @@ ax = plot.plot_lims(laor, filt=laor.bands.get('r'), ax=ax, absmag=True, color='r
 ax = plot.label_axis(ax, 'Restframe days since explosion', 'Absolute Magnitude [mag]',
                      legend_kwargs={'loc': (0.59, 0.74), 'ncol': 2})
 # Format the figure, (invert y-axis, set limits, set tick intervals, etc.)
+fig.tight_layout()  # just to make it prettier.
 ax = plot.format_axis(ax, invert=True, xlim=(-10, 98), ylim=ax.get_ylim(),
                       x_tick_interval=10, y_tick_interval=1)
 # Draw a vertical line at phase zero
 ax.axvline(0, color='black', linestyle='--', alpha=0.5)
-fig.tight_layout()  # just to make it prettier.
+
 
 # load and plot spectra
-df = pd.read_json('spectra_df.json')
+df = pd.read_json('inputs/spectra_df.json')
 df['restframe'] = (df['jd']-laor.phase_zero)/(1+laor.redshift)
 ax.vlines(df['restframe'], ymin=ax.get_ylim()[0] * np.ones_like(df.restframe) - 0.35,
           ymax=ax.get_ylim()[0] * np.ones_like(df.restframe),
           colors='black', lw=2)
 
+# Interpolation snake plot
+lao_interp = SN.from_csv("./interp/SNClass_SN2020lao/")
+lao_interp = lao_interp.restframe()
+lao_interp = plot.make_plot_shifts(sn=lao_interp, reversed_for_abs=True, shifts=shifts)
+lao_interp = plot.make_plot_colors(sn=lao_interp, colors=plot.DEFAULT_COLORS)
+for name, band in lao_interp.bands.items():
+    band_phot = lao_interp.band(band.name, return_absmag=True)
+    ax = plot.plot_mag(band_phot, ax=ax, shift=band.plot_shift,
+                       error_snake=True, alpha=0.3, color=band.plot_color)
+
+
 # Display and save
 fig.show()
-fig.savefig("absmag.pdf", dpi=200, format='pdf')
+fig.savefig("absmag2.pdf", dpi=200, format='pdf')

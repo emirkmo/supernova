@@ -1,16 +1,19 @@
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-import numpy as np
-from matplotlib.ticker import MultipleLocator, AutoMinorLocator
-import matplotlib as mpl
-from supernova.plotting.colors import ColorIterable
-from supernova.supernova import SN, Photometry, MagPhot, FluxPhot
-from supernova.filters import Filter
-from typing import Optional, Any
-from numpy.typing import ArrayLike
 import warnings
+from typing import Optional, Any, Callable
+import corner
+from lmfit.minimizer import MinimizerResult
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
-from .colors import DEFAULT_COLORS
+from matplotlib.lines import Line2D
+from matplotlib.ticker import MultipleLocator, AutoMinorLocator
+from numpy.typing import ArrayLike
+
+from supernova.filters import Filter
+from supernova.plotting.colors import ColorIterable
+from supernova.supernova import SN, Photometry, MagPhot, FluxPhot, LumPhot
 
 # Plot styling reasonable defaults.
 sns.set_style("ticks")
@@ -22,7 +25,8 @@ plot_defaults = {"label": "",
                  "markersize": 5,
                  "linestyle": 'None',
                  'color': None}
-
+snake_defaults = {"alpha": 0.7,
+                  "zorder": 0}
 figure_defaults = {"figsize": (8, 6),
                    "dpi": 200, }
 legend_defaults = {"frameon": True,
@@ -30,16 +34,36 @@ legend_defaults = {"frameon": True,
                    "handletextpad": 0.1,
                    "handlelength": 1.5}
 
+PlotType = Callable[..., plt.Axes]
 
-def plot_mag(band: MagPhot, ax: plt.Axes, shift: float = 0, **plot_kwargs: Any) -> plt.Axes:
+
+def plot_snake(x: pd.Series, y: pd.Series, z: pd.Series, ax: plt.Axes, **plot_kwargs: Any) -> plt.Axes:
+    kwargs = {**snake_defaults, **plot_kwargs}
+    ax.fill_between(x, y - z, y + z, **kwargs)
+    return ax
+
+
+def plot_mag(band: MagPhot, ax: plt.Axes, shift: float = 0,
+             error_snake: bool = False, **plot_kwargs: Any) -> plt.Axes:
+    if error_snake:
+        return plot_snake(band.phase, band.mag+shift, band.mag_err, ax, **plot_kwargs)
     kwargs = {**plot_defaults, **plot_kwargs}
     ax.errorbar(band.phase, band.mag+shift, band.mag_err, **kwargs)
     return ax
 
 
-def plot_flux(band: FluxPhot, ax: plt.Axes, shift: float = 0, **plot_kwargs: Any) -> plt.Axes:
+def plot_flux(band: FluxPhot, ax: plt.Axes, shift: float = 0, error_snake: bool = False,
+              **plot_kwargs: Any) -> plt.Axes:
+    if error_snake:
+        return plot_snake(band.phase, band.flux + shift, band.flux_err, ax, **plot_kwargs)
     kwargs = {**plot_defaults, **plot_kwargs}
     ax.errorbar(band.phase, band.flux+shift, band.flux_err, **kwargs)
+    return ax
+
+
+def plot_lum(band: LumPhot, ax: plt.Axes, **plot_kwargs: Any) -> plt.Axes:
+    kwargs = {**plot_defaults, **plot_kwargs}
+    ax.errorbar(band.phase, band.lum, band.lum_err, **kwargs)
     return ax
 
 
@@ -53,12 +77,32 @@ def plot_lim(band: Photometry, ax: plt.Axes, shift: float = 0, as_flux: bool = F
     return ax
 
 
-def plot_lims(sn: SN, filt: Filter, ax: plt.Axes, absmag: bool = False, as_flux: bool = False, **plot_kwargs: Any) -> plt.Axes:
+def plot_lims(sn: SN, filt: Filter, ax: plt.Axes, absmag: bool = False,
+              as_flux: bool = False, **plot_kwargs: Any) -> plt.Axes:
     """
     Plot limits for a given band.
     """
     band = sn.band(filt.name, return_absmag=absmag, lims=True)
     ax = plot_lim(band, ax, filt.plot_shift, as_flux, **plot_kwargs)
+    return ax
+
+
+def plot_band(sn: SN, band: str, ax: plt.Axes, site: str = 'all', plot_type: PlotType = plot_mag,
+              absmag: bool = False, **kwargs: Any) -> plt.Axes:
+    """
+    Plot a single band.
+    """
+    band = sn.band(band, site=site, return_absmag=absmag)
+
+    marker = kwargs.get('marker', None)
+    if marker is None:
+        if site != 'all':
+            marker = sn.sites.get_marker(site)
+        else:
+            marker = _get_markers_to_use()[0]
+    kwargs['marker'] = marker
+
+    ax = plot_type(band, ax, **kwargs)
     return ax
 
 
@@ -235,6 +279,7 @@ def label_axis(ax: plt.Axes, xlabel: str, ylabel: str, legend: bool = True,
     if legend:
         if legend_kwargs is None:
             legend_kwargs = {}
+        legend_kwargs = legend_defaults | legend_kwargs
         ax.legend(**legend_kwargs)
     return ax
 
@@ -265,3 +310,10 @@ def format_axis(ax: plt.Axes,
     if log:
         ax.set_yscale('log')
     return ax
+
+
+def plot_emcee(res: MinimizerResult):
+    emcee_plot = corner.corner(res.flatchain, labels=res.var_names,
+                               truths=list(res.params.valuesdict().values()))
+    return emcee_plot
+

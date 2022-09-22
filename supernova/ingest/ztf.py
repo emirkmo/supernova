@@ -1,17 +1,19 @@
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-import warnings
+
 import pandas as pd
+from astropy.time import Time
+
 from supernova import SN
 from supernova.ingest.utils import (
     add_phot, update_sn, verify_columns)
-from .collators import Collator
 from supernova.supernova import Photometry, PhotFactory
 from supernova.utils import StrEnum
+from .collators import Collator
 from .converters import BaseConverter, Converter
-from dataclasses import dataclass
-from .readers import PathType, read_astropy_table, read_pandas_csv, times_as_jd
-from astropy.time import Time
+from .readers import PathType, read_astropy_table, read_pandas_csv
 
 
 @dataclass(frozen=True)
