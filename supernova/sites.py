@@ -53,7 +53,9 @@ class Sites:
         self.sites_by_name = {value.name: value for value in self.sites.values()}
         self.markers = {site.id: site.marker for site in self.sites.values()}
 
-    def update_markers(self) -> None:
+    def update_markers(self, site_markers: Optional[dict[int, str]] = None) -> None:
+        if site_markers is not None:
+            self.markers = site_markers  # type: ignore
         for site in self.sites.values():
             site.marker = self.markers[site.id]
 

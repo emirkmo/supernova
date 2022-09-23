@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
+import json
 from typing import Optional
 import multiprocessing
 import mpmath as mp
@@ -8,6 +9,8 @@ from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike, NDArray
 
 from supernova import StrEnum
+from supernova.utils import PathType
+from .bololc import ModelFit
 
 # Conversion Factors
 days = 86400  # seconds
@@ -97,7 +100,7 @@ def trapped(t, M_ej, v_ph):
     return 1.0 - (0.965 * mp.exp(-tau(t, M_ej, Ek)))
 
 
-def get_x_full(x, E_exp):
+def get_x_full(x: NDArray, E_exp: float) -> np.ndarray[float]:
     if E_exp == 0.0:
         x_full = x
     else:
@@ -106,7 +109,7 @@ def get_x_full(x, E_exp):
     return x_full
 
 
-def get_model_at_x(x, x_full, M, N, V, E_exp):
+def get_model_at_x(x, x_full, M, N, V, E_exp) -> np.ndarray[float]:
     model_now = L(x_full, M, N, V)
 
     model_now = model_now.astype(np.float64) * 1e43
@@ -136,9 +139,15 @@ class RegularizedFit:
         return np.sum(r ** 2) / 2 / len(r) + self.regularization
 
 
-# fix velocity fit
-def fit_func(params: Parameters, x: ArrayLike, y: ArrayLike,
-             weights: Optional[ArrayLike] = None) -> ArrayLike:
+def process_params(params: Parameters) -> tuple[float, float, float, float]:
+    mej = params['M_ej'].value * Msun
+    mni = params['M_ni'].value * Msun
+    e_exp = params['E_exp'].value
+    vph = params['V_ph'].value * kms10
+    return mej, mni, e_exp, vph
+
+
+def get_model(params: Parameters, x: ArrayLike) -> NDArray[np.float64]:
     mej, mni, e_exp, vph = process_params(params)
 
     if abs(e_exp - 0.0) < 1e-3:
@@ -152,19 +161,17 @@ def fit_func(params: Parameters, x: ArrayLike, y: ArrayLike,
         model_now = L(x, mej, mni, vph)
         model_int = model_now.astype(np.float64) * 1e43
 
+    return model_int
+
+# fix velocity fit
+def fit_func(params: Parameters, x: NDArray[np.float64], y: NDArray[np.float64],
+             weights: Optional[NDArray[np.float64]] = None) -> NDArray[np.float64]:
+    model_int = get_model(params, x)
+
     resids = model_int - y  # minimize this
     if weights is not None:
         resids = resids * weights
     return resids
-
-
-def process_params(params: Parameters) -> tuple[float, float, float, float]:
-    mej = params['M_ej'].value * Msun
-    mni = params['M_ni'].value * Msun
-    e_exp = params['E_exp'].value
-    vph = params['V_ph'].value * kms10
-    return mej, mni, e_exp, vph
-
 
 @dataclass
 class ArnettParams:
@@ -234,3 +241,77 @@ def fit_arnett(xdata: ArrayLike, ydata: ArrayLike, weights: Optional[ArrayLike] 
                                 workers=max(min(multiprocessing.cpu_count()//2 + 3, 10), 1))
 
     return fit_result, emcee_result
+
+
+@dataclass
+class  ArnettModelFit(ModelFit):
+    name: str = "Arnett"
+    params: Parameters = field(default_factory=Parameters)
+
+    mej: float = field(default=-999)
+    mej_err: float = field(default=-999)
+    mni: float = field(default=-999)
+    mni_err: float = field(default=-999)
+    eexp: float = field(default=-999)
+    eexp_err: float = field(default=-999)
+    vph: float = field(default=-999)
+    vph_err: float = field(default=-999)
+    ek: float = field(default=-999)
+    ek_err: float = field(default=-999)
+
+    def __post_init__(self):
+        if self.mej == -999:
+            self.set_pars()
+            self.set_errors()
+        self.params = self.build_params()
+
+    def with_error(self, parname: str):
+        return f"${getattr(self, parname):.2f} \pm {getattr(self, f'{parname}_err'):.3f}$"
+
+
+    def __getitem__(self, __name: str) -> str:
+        if __name in self.params:
+            return f"${self.params[__name].value} \pm {self.params[__name].stderr}$"
+        raise KeyError(f"Parameter {__name} not found")
+
+    def set_pars(self) -> None:
+        self.mej = self.params['M_ej'].value
+        self.mni = self.params['M_ni'].value
+        self.eexp = self.params['E_exp'].value
+        self.vph = self.params['V_ph'].value
+
+    def set_errors(self) -> None:
+        self.mej_err = self.params["M_ej"].stderr
+        self.mni_err = self.params["M_ni"].stderr
+        self.eexp_err = self.params["E_exp"].stderr
+        self.vph_err = self.params["V_ph"].stderr
+        self.ek = get_Ek(self.mej, self.vph)
+        self.ek_err = get_Ek_err(self.mej, self.mej_err, self.vph, self.vph_err)
+
+    def build_params(self) -> Parameters:
+        params = Parameters()
+        params.add('M_ej', value=self.mej, vary=True)
+        params.add('delta', value=self.mni/self.mej, vary=True)
+        params.add('M_ni', expr='M_ej*delta', vary=False)
+        params.add('E_exp', value=self.eexp, vary=False)
+        params.add('V_ph', value=self.vph, vary=False)
+
+        for par in params:
+            if par == 'delta':
+                continue
+            params[par].stderr = getattr(self, f"{par.replace('_','').lower()}_err")
+
+        return params
+
+    def get_model(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
+        return get_model(self.params, x)
+
+    def to_json(self, path: PathType) -> None:
+        with open(path, 'w') as f:
+            json.dump(asdict(self), f, indent=4)
+
+    @classmethod
+    def from_json(cls, path: PathType) -> "ArnettModelFit":
+        with open(path, 'r') as f:
+            data = json.load(f)
+        return cls(**data)

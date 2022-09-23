@@ -608,7 +608,7 @@ class SNSerializer:
         _fields = {}
         csvs = glob.glob(str(Path(dirpath) / '*.csv'))
         if len(csvs) < 2:
-            raise FileNotFoundError("Only found: ", csvs)
+            raise FileNotFoundError(f"Only found: {csvs} in {dirpath}.")
         _sn_dict = {}
         for csv in csvs:
             df = pd.read_csv(csv, index_col=0).squeeze("columns")

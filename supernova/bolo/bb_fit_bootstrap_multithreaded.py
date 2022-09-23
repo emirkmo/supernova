@@ -14,6 +14,7 @@ import warnings
 
 from supernova import Photometry, Filter, SN, LumPhot, Phot, BBLumPhot, PhotFactory, AbstractLumPhot
 from supernova.filters import FilterSorter
+from .bololc import bolo_filt, blackbody_filt
 
 # Constants
 a = 4 * constants.sigma_sb / constants.c  # type: ignore
@@ -24,9 +25,7 @@ DEFAULT_KWARGS = {"temperature": 10000 * u.K}
 flux_units = u.erg / u.s / u.cm**2  # type: ignore
 MyArrayLike = ArrayLike | u.Quantity
 
-# Filters
-bolo_filt = Filter('Bolo')
-blackbody_filt = Filter("BB")
+
 
 
 def bb_err(bb_fit: physical_models.BlackBody) -> u.Quantity:

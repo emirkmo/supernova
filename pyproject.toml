@@ -20,6 +20,18 @@ dependencies = [
     "svo_filters",
     "matplotlib",
     "seaborn",
+    "astroquery",
+    "corner",
+    "dust_extinction",
+    "lmfit",
+    "mpmath",
+    "specutils",
+    "tqdm",
+    "typing_extensions",
+    "numdifftools",
+    "emcee",
+    "piscola",
+    "svo_filters"
 ]
 
 [project.urls]
