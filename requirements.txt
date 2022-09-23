@@ -1,0 +1,15 @@
+astropy==5.1
+astroquery==0.4.6
+corner==2.2.1
+dust_extinction==1.1
+lmfit==1.0.3
+matplotlib==3.6.0
+mpmath==1.2.1
+numpy==1.23.3
+pandas==1.5.0
+piscola==1.0.2
+seaborn==0.12.0
+specutils==1.8.1
+svo_filters==0.4.4
+tqdm==4.64.1
+typing_extensions==4.3.0
