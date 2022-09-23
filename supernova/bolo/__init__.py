@@ -1,3 +1,3 @@
 from .bb_fit_bootstrap_multithreaded import *
-from .bololc import BoloType, bolo_weighted_xyz
-from .arnett import fit_arnett, ArnettParams
+from .bololc import BoloType, bolo_weighted_xyz, ModelFit
+from .arnett import fit_arnett, ArnettParams, ArnettModelFit
