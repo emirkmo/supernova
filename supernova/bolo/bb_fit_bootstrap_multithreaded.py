@@ -12,7 +12,7 @@ import pandas as pd
 import tqdm
 import warnings
 
-from supernova import Photometry, Filter, SN, LumPhot, Phot, BBLumPhot, PhotFactory, AbstractLumPhot
+from supernova import Photometry, Filter, SN, LumPhot, BBLumPhot, PhotFactory
 from supernova.filters import FilterSorter
 from .bololc import bolo_filt, blackbody_filt
 

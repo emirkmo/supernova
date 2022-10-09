@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Sequence
+from typing import Any, MutableMapping, Optional, Callable, Sequence, cast
 from astropy.table import Table
 from astropy.time import Time
 import pandas as pd
@@ -39,15 +39,14 @@ def get_astropy_times_as_jd(at: Table) -> Table:
         return at
 
     for col in times_cols:
-        fmt = detect_mjd_or_jd(at[col])
+        fmt = detect_mjd_or_jd(cast(Sequence, at[col]))
         if fmt is None:
             warnings.warn(f"Could not determine time format for column: {col}.", UserWarning)
         else:
             at[col] = Time(at[col], format=fmt).jd
     return at
 
-
-def detect_mjd_or_jd(col: Sequence) -> Optional[str]:
+def detect_mjd_or_jd(col: Sequence[Any]) -> Optional[str]:
     def mjd(sval: str) -> bool:
         return len(sval) == 5 and sval[0] in ['5', '6']
 

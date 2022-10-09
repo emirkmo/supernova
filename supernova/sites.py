@@ -1,9 +1,11 @@
 from dataclasses import dataclass, asdict, field, fields
-from typing import TypeVar, Mapping, Optional
+from typing import Any, TypeVar, Mapping, Optional, Collection, cast
 
 import numpy as np
 import pandas as pd
-from typing_extensions import Unpack
+from typing_extensions import Unpack, TypedDict, NotRequired
+
+from supernova.photometry import Photometry
 
 SiteType = TypeVar('SiteType', int, str)
 SiteDict = Mapping[int, str]
@@ -18,6 +20,11 @@ class Site:
 
     def __call__(self):
         return self.name
+
+SiteKeys = TypedDict("SiteKeys", {'id': int, 'name': str, 'marker': NotRequired[str],
+                     'err_scale': NotRequired[float]})
+SiteKeysGenID = TypedDict("SiteKeys", {'id': NotRequired[int], 'name': str, 'marker': NotRequired[str],
+                     'err_scale': NotRequired[float]})
 
 
 @dataclass
@@ -59,7 +66,7 @@ class Sites:
         for site in self.sites.values():
             site.marker = self.markers[site.id]
 
-    def get_marker(self, site: SiteType) -> str:
+    def get_marker(self, site: SiteType) -> str | None:
         return self[site].marker
 
     def get_err_scale(self, site: SiteType) -> float:
@@ -77,12 +84,13 @@ class Sites:
     def generate_id(self):
         return self.rng.choice(list(set(range(100)) - set(self.site_ids)))
 
-    def add_site(self, name: str = 'Unknown', **site_kwargs: Unpack[Site]) -> Site:
-        if site_kwargs.get('id', None) is None:
+    def add_site(self, **site_kwargs: Unpack[SiteKeysGenID]) -> Site:
+        if site_kwargs.get('id') is None:
             site_kwargs['id'] = self.generate_id()
-        self.sites[site_kwargs['id']] = Site(name=name, **site_kwargs)
+        siteid = site_kwargs.get('id', self.generate_id())
+        self.sites[siteid] = Site(**site_kwargs)
         self._refresh_sites()
-        return self.sites[site_kwargs['id']]
+        return self.sites[siteid]
 
     def remove_site(self, site: Site) -> Site:
         rmd_site = self.sites.pop(site.id)
@@ -94,28 +102,32 @@ class Sites:
         return cls(sites={k: Site(id=k, name=v) for k, v in sitemap.items()})
 
     @classmethod
-    def from_dict(cls, d: dict[int, dict[str, int | str | None]]) -> 'Sites':
+    def from_dict(cls, d: dict[int, SiteKeys]) -> 'Sites':
         site_names = [f.name for f in fields(Site)]
         required_keys = [f for f in fields(Site) if not isinstance(f.default, f.type)]
 
         return cls(
-            sites={k: Site(**{sk: sv for sk, sv in v.items() if sk in site_names})
+            sites={k: Site(**{sk: sv for sk, sv in v.items() if sk in site_names}) # type: ignore
                    for k, v in d.items() if all([vk for vk in v if vk in required_keys])}
         )
 
     @classmethod
-    def from_list(cls, sitenames: list) -> 'Sites':
-        return cls(sites={i: s for i, s in enumerate(sitenames)})
+    def from_phot(cls, phot: pd.DataFrame | Photometry) -> 'Sites':
+        return cls.from_list(dict(phot.site.unique().astype(str)))
+
+    @classmethod
+    def from_list(cls, sitenames: Collection[str]) -> 'Sites':
+        return cls(sites={i: Site(i, s) for i, s in enumerate(sitenames)})
 
     @classmethod
     def from_df(cls, df: pd.DataFrame | pd.Series) -> 'Sites':
         if isinstance(df, pd.Series):
-            return cls.from_sitemap(df.to_dict())
+            return cls.from_sitemap(cast(SiteDict, df.to_dict()))
         if 'id' not in df:
             df['id'] = df.index
         if 'name' not in df:
             df.rename({df.columns[0]: 'name'}, axis=1, inplace=True)
-        return cls.from_dict(df.to_dict('index'))
+        return cls.from_dict(cast(dict[int, SiteKeys], df.to_dict('index')))
 
 
 flows_sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT', 0: 'ZTF'}

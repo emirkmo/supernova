@@ -8,9 +8,9 @@ from lmfit import minimize, Parameters, report_fit
 from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike, NDArray
 
-from supernova import StrEnum
-from supernova.utils import PathType
-from .bololc import ModelFit
+from supernova.utils import PathType, StrEnum, FloatArr
+from .bololc import BoloType, ModelFit, bolo_weighted_xyz
+
 
 # Conversion Factors
 days = 86400  # seconds
@@ -268,6 +268,8 @@ class  ArnettModelFit(ModelFit):
     def with_error(self, parname: str):
         return f"${getattr(self, parname):.2f} \pm {getattr(self, f'{parname}_err'):.3f}$"
 
+    def with_error_1(self, parname: str):
+        return f"${getattr(self, parname):.1f} \pm {getattr(self, f'{parname}_err'):.2f}$"
 
     def __getitem__(self, __name: str) -> str:
         if __name in self.params:
@@ -315,3 +317,15 @@ class  ArnettModelFit(ModelFit):
         with open(path, 'r') as f:
             data = json.load(f)
         return cls(**data)
+
+
+def get_arnett_params(sn, phase_min: float = 0, phase_max: float = 10000, vph: float = 10., mej_init: float = 1) -> tuple[FloatArr, FloatArr, FloatArr, ArnettParams]:
+    """Get the Arnett parameters for a SN
+    vph: float = velocity of the ejecta in $10^4$ km/s
+    mej_init: float = initial guess for the ejecta mass in solar masses
+    """
+    x, y, w = bolo_weighted_xyz(sn, BoloType.quasi)
+    apars = ArnettParams(mej_init, vph=vph, vary_e_exp=False)
+
+    mask = (x > phase_min) & (x < phase_max)
+    return x[mask], y[mask], w[mask], apars

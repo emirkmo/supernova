@@ -1,26 +1,28 @@
 from dataclasses import dataclass, field, asdict, replace
 from enum import Enum
-from typing_extensions import Self
 import warnings
-from typing import Iterable, Mapping, Optional, Any, Callable
+from typing import Iterable, Optional, Any, Callable, Sequence, TypeGuard, cast
 import corner
 from lmfit.minimizer import MinimizerResult
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import seaborn as sns
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator
-from numpy.typing import ArrayLike
+from matplotlib.figure import Figure
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+from matplotlib.legend import Legend
+from matplotlib.axes import Axes
 import inspect
 
 from supernova.filters import Filter
-from supernova.plotting.colors import ColorIterable
 from supernova.sites import Site
-from supernova.supernova import SN, Photometry, MagPhot, FluxPhot, LumPhot
+from supernova.supernova import SN
+from supernova.photometry import HasFlux, HasMag, ImplementsFlux, ImplementsLuminosity, ImplementsMag, MagPhotometry, Photometry, Series
 from .colors import ColorIterable, DEFAULT_COLORS, ColorType, Color
+
 
 # Plot styling reasonable defaults.
 sns.set_style("ticks")
@@ -41,26 +43,27 @@ legend_defaults = {"frameon": True,
                    "handletextpad": 0.1,
                    "handlelength": 1.5}
 default_color = Color(DEFAULT_COLORS)
-PlotType = Callable[..., plt.Axes]
+PlotType = Callable[..., Axes]
 
 
-def plot_snake(x: pd.Series, y: pd.Series, z: pd.Series, ax: plt.Axes, **plot_kwargs: Any) -> plt.Axes:
+def plot_snake(x: Series[float], y: Series[float], z: Series[float], ax: Axes, **plot_kwargs: Any) -> Axes:
     kwargs = {**snake_defaults, **plot_kwargs}
-    ax.fill_between(x, y - z, y + z, **kwargs)
+    ax.fill_between(x, y - z, y + z, **kwargs)  # type: ignore
     return ax
 
 
-def plot_mag(phot: MagPhot, ax: plt.Axes, shift: float = 0,
-             error_snake: bool = False, **plot_kwargs: Any) -> plt.Axes:
+def plot_mag(phot: ImplementsMag, ax: Axes, shift: float = 0,
+             error_snake: bool = False, **plot_kwargs: Any) -> Axes:
     if error_snake:
-        return plot_snake(phot.phase, phot.mag+shift, phot.mag_err, ax, **plot_kwargs)
+        ps = phot.mag + shift
+        return plot_snake(phot.phase, phot.mag + shift, phot.mag_err, ax, **plot_kwargs)
     kwargs = {**plot_defaults, **plot_kwargs}
     ax.errorbar(phot.phase, phot.mag+shift, phot.mag_err, **kwargs)
     return ax
 
 
-def plot_flux(phot: FluxPhot, ax: plt.Axes, shift: float = 0, error_snake: bool = False,
-              **plot_kwargs: Any) -> plt.Axes:
+def plot_flux(phot: ImplementsFlux, ax: Axes, shift: float = 0, error_snake: bool = False,
+              **plot_kwargs: Any) -> Axes:
     if error_snake:
         return plot_snake(phot.phase, phot.flux + shift, phot.flux_err, ax, **plot_kwargs)
     kwargs = {**plot_defaults, **plot_kwargs}
@@ -68,24 +71,27 @@ def plot_flux(phot: FluxPhot, ax: plt.Axes, shift: float = 0, error_snake: bool 
     return ax
 
 
-def plot_lum(phot: LumPhot, ax: plt.Axes, **plot_kwargs: Any) -> plt.Axes:
+def plot_lum(phot: ImplementsLuminosity, ax: Axes, **plot_kwargs: Any) -> Axes:
     kwargs = {**plot_defaults, **plot_kwargs}
     ax.errorbar(phot.phase, phot.lum, phot.lum_err, **kwargs)
     return ax
 
 
-def plot_lim(phot: Photometry, ax: plt.Axes, shift: float = 0, as_flux: bool = False, **plot_kwargs: Any) -> plt.Axes:
+def plot_lim(phot: Photometry, ax: Axes, shift: float = 0, as_flux: bool = False, **plot_kwargs: Any) -> Axes:
     lim_defaults = {"label": "", "marker": 'v', "markerfacecolor": 'None'}
     kwargs = {**plot_defaults, **lim_defaults, **plot_kwargs}
     if as_flux:
-        ax.plot(phot.phase, phot.flux+shift, **kwargs)
+        if isinstance(phot, HasFlux):
+            ax.plot(phot.phase, phot.flux+shift, **kwargs)
     else:
+        if not isinstance(phot, HasMag):
+            raise TypeError("Cannot plot limits as magnitudes if photometry does not have `mag`.")
         ax.plot(phot.phase, phot.mag+shift, **kwargs)
     return ax
 
 
-def plot_lims(sn: SN, band: Filter, ax: plt.Axes, absmag: bool = False,
-              as_flux: bool = False, **plot_kwargs: Any) -> plt.Axes:
+def plot_lims(sn: SN, band: Filter, ax: Axes, absmag: bool = False,
+              as_flux: bool = False, **plot_kwargs: Any) -> Axes:
     """
     Plot limits for a given band.
     """
@@ -94,8 +100,8 @@ def plot_lims(sn: SN, band: Filter, ax: plt.Axes, absmag: bool = False,
     return ax
 
 
-def plot_band(sn: SN, band: Filter, ax: plt.Axes, site: str = 'all', plot_type: PlotType = plot_mag,
-              absmag: bool = False, **kwargs: Any) -> plt.Axes:
+def plot_band(sn: SN, band: Filter, ax: Axes, site: str = 'all', plot_type: PlotType = plot_mag,
+              absmag: bool = False, **kwargs: Any) -> Axes:
     """
     Plot a single band.
     """
@@ -107,14 +113,33 @@ def plot_band(sn: SN, band: Filter, ax: plt.Axes, site: str = 'all', plot_type: 
     return ax
 
 
-def make_figure(fig_kwargs: Optional[dict] = None) -> tuple[plt.Figure, tuple[plt.Axes] | plt.Axes]:
-    if fig_kwargs is None:
-        fig_kwargs = figure_defaults
+def _is_single_figure(axs: list[list[Axes]] | Axes) -> TypeGuard[Axes]:
+    return not isinstance(axs, list)
+
+def _is_multi_figure(axs: list[list[Axes]] | Axes) -> TypeGuard[list[list[Axes]]]:
+    return isinstance(axs, list)
+
+
+def make_figure(**fig_kwargs: Any) -> tuple[Figure, list[list[Axes]] | Axes]:
+    fig_kwargs = figure_defaults | fig_kwargs
     fig, axs = plt.subplots(**fig_kwargs)
+    if _is_single_figure(axs):
+        return fig, axs
     return fig, axs
 
+def make_single_figure(**fig_kwargs: Any) -> tuple[Figure, Axes]:
+    fig, axs = make_figure(**fig_kwargs)
+    if _is_single_figure(axs):
+        return fig, axs
+    elif _is_multi_figure(axs):
+        ax = cast(Axes, axs[0][0])
+        return fig, ax
+    
+    raise TypeError("Unknown axes type.")
 
-def make_plot_shifts(sn: SN, shifts: Optional[ArrayLike] = None,
+
+
+def make_plot_shifts(sn: SN, shifts: Optional[Sequence[float | int]] = None,
                      reversed_for_abs: bool = False) -> SN:
     """
     Modify state of SN object with the plot shift
@@ -128,14 +153,17 @@ def make_plot_shifts(sn: SN, shifts: Optional[ArrayLike] = None,
     if shifts is not None and len(shifts) < n_bands:
         raise ValueError("shifts must be the same or greater "
                          "length as the number of bands or `None`.")
+        
     if shifts is None:
-        shifts = np.linspace(0, n_bands, n_bands + 1) - (n_bands // 2)
+        use_shifts = np.linspace(0, n_bands, n_bands + 1) - (n_bands // 2)
+    else:
+        use_shifts = shifts
 
     if reversed_for_abs:
-        shifts = shifts[::-1]
+        use_shifts = use_shifts[::-1]
 
     for i, f in enumerate(sn.bands.values()):
-        f.plot_shift = shifts[i]
+        f.plot_shift = use_shifts[i]
 
     return sn
 
@@ -150,14 +178,20 @@ def make_plot_colors(sn: SN,
     compatible colors (ex.:3 floats or a color string).
     """
     if colors is None:
-        colors = sns.color_palette("Paired", n_colors=len(sn.bands))
-    if len(colors) < len(sn.bands):
+        use_colors = sns.color_palette("Paired", n_colors=len(sn.bands))
+    else:
+        use_colors = colors
+    #if isinstance(use_colors, sns.colors._ColorPalette.LienarSeg
+    if isinstance(use_colors, LinearSegmentedColormap | ListedColormap):
+        raise TypeError("Color map LinearSegmentedColormap | ListedColormap is not a valid color iterable.")
+
+    if len(use_colors) < len(sn.bands):
         raise ValueError("colors must be the same or greater "
                          "length as the number of bands or `None`.")
-    if isinstance(colors, list):
-        colors = {band.name: color for band, color in zip(sn.bands.values(), colors)}
+    if isinstance(use_colors, list):
+        use_colors = {band.name: color for band, color in zip(sn.bands.values(), use_colors)}
     for band in sn.bands.values():
-        band.plot_color = colors[band.name]
+        band.plot_color = use_colors[band.name]
     return sn
 
 
@@ -257,10 +291,10 @@ def get_plot_kwargs(site: str | Site, band: Filter, site_label: str = '',
     return {**plot_defaults, **plot_kwargs}
 
 
-def plot_all_bands(sn: SN, ax: plt.Axes, site: str = 'all',
+def plot_all_bands(sn: SN, ax: Axes, site: str = 'all',
                    plot_type: PlotType = plot_mag, absmag: bool = False, make_labels: bool = True,
-                   **plot_kwargs: Any) -> plt.Axes:
-    # _ax: plt.Axes, _sn: SN, _site: str, _site_label: str, _marker: str, _plot_kwargs: dict,
+                   **plot_kwargs: Any) -> Axes:
+    # _ax: Axes, _sn: SN, _site: str, _site_label: str, _marker: str, _plot_kwargs: dict,
     #           update_label: bool = True
     """
     Plot all bands of a site, or of all sites if not given, on a single axis.
@@ -272,6 +306,8 @@ def plot_all_bands(sn: SN, ax: plt.Axes, site: str = 'all',
 
     for band in sn.bands.values():
         plot_kwargs = get_plot_kwargs(_site, band, update_label=make_labels, **plot_kwargs)
+        if not make_labels:
+            plot_kwargs['label'] = None
         try:
             band_phot = sn.band(band.name, site=site, return_absmag=absmag,
                                 flux=plot_type == plot_flux, lims = plot_type == plot_lims)
@@ -285,8 +321,8 @@ def plot_all_bands(sn: SN, ax: plt.Axes, site: str = 'all',
 
     return ax
 
-def plot_split_by_site(sn: SN, ax: plt.Axes, plot_type: PlotType = plot_mag, absmag: bool = False,
-                       label_sites: bool = True, **plot_kwargs: Any) -> plt.Axes:
+def plot_split_by_site(sn: SN, ax: Axes, plot_type: PlotType = plot_mag, absmag: bool = False,
+                       label_sites: bool = True, **plot_kwargs: Any) -> Axes:
     """
     Plot all bands of a supernova, split by site.
     """
@@ -300,48 +336,59 @@ def plot_split_by_site(sn: SN, ax: plt.Axes, plot_type: PlotType = plot_mag, abs
                             make_labels=make_labels, **plot_kwargs)
         first = False
         legend_labels.append(site.name)
-        legend_handles.append(Line2D([0], [0], color='black', marker=site.marker, linestyle='None',
+        usemarker = site.marker if site.marker is not None else _get_markers_to_use()[0]
+        legend_handles.append(Line2D([0], [0], color='black', marker=usemarker, linestyle='None',
                                      markersize=plot_kwargs.get('markersize', 6)))
     if not label_sites:
         return ax
 
     # add site as black markers
-    legend_handles, legend_labels = update_legend_handles_labels(ax, legend_handles, legend_labels)
-    ax.legend(legend_handles, legend_labels, **legend_defaults)
-
+    leg, ax = _safe_draw_legend(ax, legend_handles, legend_labels)
     return ax
 
-def update_legend_handles_labels(ax: plt.Axes, legend_handles: list[Any],
-                  legend_labels: list[str]) -> plt.Axes:
-    handles, labels = ax.get_legend_handles_labels()
+def update_legend_handles_labels(ax: Axes, legend_handles: list[Any],
+                  legend_labels: list[str]) -> tuple[Axes, list[Any], list[str]]:
+    handles, labels = _safe_get_legend_handles_labels(ax)
     for handle, label in zip(handles, labels):
         if label in legend_labels:
             continue
         legend_handles.append(handle)
         legend_labels.append(label)
-    return legend_handles, legend_labels
+    return ax, legend_handles, legend_labels
 
-def plot_abs_mag(sn: SN, ax: plt.Axes = None,
+def _get_legend_handles_labels(legend: Legend) -> tuple[list[Any], list[str]]:
+    handles = legend.legendHandles 
+    labels = legend.get_texts()
+    labels = [label.get_text() for label in labels]
+    return handles, labels
+
+def _safe_get_legend_handles_labels(ax: Axes) -> tuple[list[Any], list[str]]:
+    # First, get the handles and labels from the axis, if exists
+    if isinstance(ax.legend_, Legend):
+        handles, labels = _get_legend_handles_labels(ax.legend_)
+        if len(handles) > 0:
+            return handles, labels
+            
+    # If we didn't find handles, try to get them from the figure/axes
+    handles, labels = ax.get_legend_handles_labels()
+    return handles, labels
+
+def _safe_draw_legend(ax: Axes, handles: list[Any], labels: list[str], **legend_kwargs: Any) -> tuple[Legend, Axes]:
+    legend_kwargs = legend_defaults | legend_kwargs
+    ax, legend_handles, legend_labels = update_legend_handles_labels(ax, handles, labels)
+    leg = ax.legend(legend_handles, legend_labels, **legend_kwargs)
+    ax.legend_ = leg 
+    return leg, ax
+
+
+def plot_abs_mag(sn: SN, ax: Optional[Axes] = None,
                  split_by_site: bool = False,
                  label_sites: bool = False,
-                 **plot_kwargs: Any) -> tuple[Optional[plt.Figure], plt.Axes]:
+                 **plot_kwargs: Any) -> Axes:
 
-    # def _plot(_ax: plt.Axes, _sn: SN, _site: str, _site_label: str, _marker: str, _plot_kwargs: dict,
-    #           update_label: bool = True) -> plt.Axes:
-    #     for filtname, filt in _sn.bands.items():
-    #         _plot_kwargs = get_plot_kwargs(_marker, filt, _site_label, update_label, _plot_kwargs)
+    if ax is None:
+        fig, ax = make_single_figure()
 
-    #         # Skip if no data
-    #         try:
-    #             band_phot = _sn.band(filt.name, site=_site, return_absmag=True)
-    #         except KeyError as e:  # Sometimes sninfo does not have the right extinction.
-    #             warnings.warn(f"Could not find absolute magnitude for {filt.name} in {sn.name},\n got exception: {e}")
-    #             band_phot = None
-
-    #         if band_phot is not None:
-    #             _ax = plot_mag(band_phot, _ax, shift=filt.plot_shift, **_plot_kwargs)
-
-    #     return _ax
     if split_by_site:
         ax = plot_split_by_site(sn, ax, plot_type=plot_mag, absmag=True, label_sites=label_sites, **plot_kwargs)
         return ax
@@ -349,54 +396,38 @@ def plot_abs_mag(sn: SN, ax: plt.Axes = None,
     ax = plot_all_bands(sn, ax, all_sites=True, plot_type=plot_mag, absmag=True, **plot_kwargs)
     return ax
 
-    # plot splitting by site
-    
-    # sn.sites.markers = get_site_markers(sn.sites.markers)
-    # sn.sites.update_markers()
-    # first = True
-    # for site in sn.sites.sites.values():
-    #     site_label = site.name if label_sites else ''
-    #     if not first:
-    #         plot_kwargs['label'] = ''
-    #     ax = _plot(ax, sn, site.name, site_label, site.marker, plot_kwargs, update_label=first)
-    #     first = False
 
-    return fig, ax
-
-
-def label_axis(ax: plt.Axes, xlabel: str, ylabel: str, legend: bool = True,
-               legend_kwargs: Optional[dict[str, Any]] = None,
+def label_axis(ax: Axes, xlabel: str, ylabel: str, legend: bool = True,
                custom_labels: Optional[list[str]] = None,
-               custom_handles: Optional[list[Line2D | Patch | Any]] = None) -> plt.Axes:
+               custom_handles: Optional[list[Line2D | Patch | Any]] = None,
+               **legend_kwargs: Any) -> tuple[Axes, Optional[Legend]]:
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)  # fontweigt = 'semibold'
-    if legend:
-        if legend_kwargs is None:
-            legend_kwargs = {}
+    if legend:  # draw legend
         legend_kwargs = legend_defaults | legend_kwargs
-        found_handles = False
-        if ax.get_legend() is not None:
-            handles, labels = ax.get_legend_handles_labels()
-            found_handles = True
+
+        # Safely get handles and labels from the axis
+        # Append custom handles and labels if given
+        # Then (re)draw the legend
         if custom_labels is not None and custom_handles is not None:
-            handles, labels = update_legend_handles_labels(ax, custom_handles, custom_labels)
-            found_handles = True
-        if found_handles:
-            ax.legend(handles, labels, **legend_kwargs) 
-            return ax
-        ax.legend(**legend_kwargs)
-    return ax
+            leg, ax = _safe_draw_legend(ax, custom_handles, custom_labels, **legend_kwargs)
+            return ax, leg
+        
+        handles, labels = _safe_get_legend_handles_labels(ax)
+        leg, ax = _safe_draw_legend(ax, handles, labels, **legend_kwargs)
+        return ax, leg
+    return ax, None
 
 
-def format_axis(ax: plt.Axes,
+def format_axis(ax: Axes,
                 invert: bool = False,
                 log: bool = False,
                 xlim: Optional[tuple[float, float]] = None,
                 ylim: Optional[tuple[float, float]] = None,
                 x_tick_interval: Optional[float] = None,
                 y_tick_interval: Optional[float] = None,
-                x_minors: Optional[float] = 5,
-                y_minors: Optional[float] = 5) -> plt.Axes:
+                x_minors: Optional[int] = 5,
+                y_minors: Optional[int] = 5) -> Axes:
     if xlim is not None:
         ax.set_xlim(*xlim)
     if ylim is not None:
@@ -480,8 +511,8 @@ class AxisParameters:
     ylim: Optional[tuple[float, float]] = None
     x_tick_interval: Optional[float] = None
     y_tick_interval: Optional[float] = None
-    x_minors: Optional[float] = 5
-    y_minors: Optional[float] = 5
+    x_minors: Optional[int] = 5
+    y_minors: Optional[int] = 5
     custom_labels: Optional[list[str]] = None
     custom_handles: Optional[list[Line2D | Patch | Any]] = None
 
@@ -491,8 +522,9 @@ class AxisParameters:
     def items(self) -> Iterable[tuple[str, Any]]:
         return asdict(self).items()
 
-    def format_axis(self, ax: plt.Axes):
-        ax = label_axis(ax, self.xlabel, self.ylabel, self.legend, self.legend_kwargs)
+    def format_axis(self, ax: Axes):
+        kwargs = self.legend_kwargs or legend_defaults
+        ax, leg = label_axis(ax, self.xlabel, self.ylabel, self.legend, **kwargs)
         ax = format_axis(ax, self.invert, self.log, self.xlim, self.ylim,
                          self.x_tick_interval, self.y_tick_interval, self.x_minors, self.y_minors)
         return ax
@@ -504,7 +536,7 @@ class Plotter:
                  params: PlotParameters = PlotParameters(),
                  axis_params: AxisParameters = AxisParameters(), **plot_kwargs: Any):
         self.sn = sn
-        self.sn.sites.markers = get_site_markers(sn.sites.markers)
+        self.sn.sites.markers = cast(dict[int, str | None], get_site_markers(sn.sites.markers))
         self.plot_type = plot_type
         self.signature = list(inspect.signature(self.plot_type).parameters.keys())
         self.plot_params = params
@@ -531,43 +563,43 @@ class Plotter:
         return kwargs | self.plot_kwargs
 
 
-    def save_current_legend(self, ax: plt.Axes):
+    def save_current_legend(self, ax: Axes):
         if ax.get_legend() is not None:
             h, l = ax.get_legend_handles_labels()
             if self.axis_params.custom_labels is None:
                 self.axis_params.custom_labels = l
             if self.axis_params.custom_handles is None:
                 self.axis_params.custom_handles = h
-            h, l = update_legend_handles_labels(
+            ax, h, l = update_legend_handles_labels(
                 ax, self.axis_params.custom_handles, self.axis_params.custom_labels)
             self.axis_params.custom_handles = h
             self.axis_params.custom_labels = l
 
-    def plot(self, ax: Optional[plt.Axes] = None, **fig_kwargs: Any) -> tuple[plt.Figure | None, plt.Axes]:
+    def plot(self, ax: Optional[Axes] = None, **fig_kwargs: Any) -> tuple[Figure | None, Axes]:
         kwargs = self.get_plot_params()
         arg = self.get_sn_or_phot()
         fig = None
         if ax is None:
-            fig, ax = make_figure(**fig_kwargs)
+            fig, ax = make_single_figure(**fig_kwargs)
         ax = self.plot_type(arg, ax=ax, **kwargs)
         self.save_current_legend(ax)
         return fig, ax
 
-    def label_axis(self, ax: plt.Axes, xlabel: str, ylabel: str, legend: bool = True,
-                   legend_kwargs: Optional[dict[str, Any]] = None) -> plt.Axes:
+    def label_axis(self, ax: Axes, xlabel: str, ylabel: str, legend: bool = True,
+                   **legend_kwargs: Any) -> tuple[Axes, Optional[Legend]]:
         self.axis_params = replace(self.axis_params, xlabel=xlabel, ylabel=ylabel,
                                    legend=legend, legend_kwargs=legend_kwargs)
-        return label_axis(ax, xlabel, ylabel, legend, legend_kwargs)
+        return label_axis(ax, xlabel, ylabel, legend, **legend_kwargs)
 
-    def format_axis(self, ax: plt.Axes,
+    def format_axis(self, ax: Axes,
                     invert: bool = False,
                     log: bool = False,
                     xlim: Optional[tuple[float, float]] = None,
                     ylim: Optional[tuple[float, float]] = None,
                     x_tick_interval: Optional[float] = None,
                     y_tick_interval: Optional[float] = None,
-                    x_minors: Optional[float] = 5,
-                    y_minors: Optional[float] = 5) -> plt.Axes:
+                    x_minors: Optional[int] = 5,
+                    y_minors: Optional[int] = 5) -> Axes:
         self.axis_params = replace(self.axis_params, invert=invert, log=log, xlim=xlim,
                                    ylim=ylim, x_tick_interval=x_tick_interval,
                                    y_tick_interval=y_tick_interval, x_minors=x_minors,
@@ -585,9 +617,9 @@ class Plotter:
         sn = make_plot_colors(sn=sn, colors=self.plot_params.colors)
         self.sn = sn
 
-    def __call__(self, ax: Optional[plt.Axes] = None) -> tuple[Optional[plt.Figure], plt.Axes]:
+    def __call__(self, ax: Optional[Axes] = None, **fig_kwargs: Any) -> tuple[Optional[Figure], Axes]:
         self.setup_plot()
-        fig, ax = self.plot(ax)
+        fig, ax = self.plot(ax, **fig_kwargs)
         ax = self.axis_params.format_axis(ax)
         return fig, ax
 

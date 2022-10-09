@@ -1,6 +1,7 @@
 from pathlib import Path
 import pandas as pd
-from supernova.supernova import PhotFactory, Photometry, SN, SNSerializer
+from supernova.supernova import SN, SNSerializer
+from supernova.photometry import PhotFactory, Photometry
 from typing import Sequence, Optional, Type, Callable
 from .readers import PathType, resolve_path, PhotReader
 from .converters import Converter
