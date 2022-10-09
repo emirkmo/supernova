@@ -1,21 +1,23 @@
+import importlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any, Mapping, Optional, Protocol, cast
+
 import astropy.units as u
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
-from typing import Protocol, Any, Optional
-from .filters import get_flows_filter, flam, zero_point_flux, Filter, SVOFilter, MagSys
-from .supernova import SN, Number, SNSerializer, Photometry, FluxPhot, PhotFactory, Phot
-from .sites import Sites
-from .ingest.utils import update_sn
 import piscola
-import importlib
-ArrayLike = ArrayLike | Number
+from numpy.typing import NDArray
+from numpy._typing import _ArrayLike as ArrayLike
+
+from .filters import FLAM, Filter, MagSys, SVOFilter, zero_point_flux
+from .photometry import FluxPhotometry, MagPhotometry, Phot, PhotFactory, Photometry
+from .sites import Sites
+from .supernova import SN, SNSerializer
+from .utils import Number, QuantityArrayType, quantity_array
 
 
 class GPInterp(Protocol):
-
     def __init__(self, sn: SN) -> None:
         ...
 
@@ -24,7 +26,16 @@ class GPInterp(Protocol):
 
 
 class PiscolaInterp:
-    piscola_names = ["time", "flux", "flux_err", "mag", "mag_err", "zp", "band", "mag_sys"]
+    piscola_names = [
+        "time",
+        "flux",
+        "flux_err",
+        "mag",
+        "mag_err",
+        "zp",
+        "band",
+        "mag_sys",
+    ]
 
     def __init__(self, sn: SN) -> None:
         self.sn = sn
@@ -47,7 +58,9 @@ class PiscolaInterp:
         """Make a DataFrame from a Piscola light curve."""
         dfs = []
         for band in lc.bands:
-            df = pd.DataFrame({colname: lc[band][colname] for colname in self.piscola_names})
+            df = pd.DataFrame(
+                {colname: lc[band][colname] for colname in self.piscola_names}
+            )
             zp_corr = init_lcs[band].zp
             df = self._fix_zp(df, zp_corr)
             dfs.append(df)
@@ -79,24 +92,32 @@ class PiscolaInterp:
 
 
 class LCInterp:
-
-    def __init__(self, reference_times: NDArray, phot: Photometry, band: Filter) -> None:
+    def __init__(
+        self, reference_times: ArrayLike, phot: Photometry, band: Filter
+    ) -> None:
         self._time = phot.jd
         self.reference_times = reference_times
         self.band = band
         self.svo_filter = band.svo
         self._phot = phot
+
+        if not isinstance(phot, MagPhotometry):
+            raise TypeError("Photometry must have `mag` and `mag_err`.")
         self._mag = self.interp(phot.mag)
         self._mag_err = self.interp(phot.mag_err)
 
-        if isinstance(phot, FluxPhot):
+        if isinstance(phot, FluxPhotometry):
             self._flux = self.interp(phot.flux)
             self._flux_err = self.interp(phot.flux_err)
         else:
+            if self.svo_filter is None:
+                raise ValueError(
+                    "Photometry must have `flux` and `flux_err` if `svo_filter` is not set."
+                )
             self._flux = mag_to_flux(self.mag, self.svo_filter, magsys=self.band.magsys)
             self._flux_err = mag_to_flux_err(self._mag_err, self.flux)
 
-    def interp(self, yp: ArrayLike) -> ArrayLike:
+    def interp(self, yp: QuantityArrayType) -> np.ndarray[Number, Any]:
         return np.interp(self.reference_times, self._time, yp)
 
     @property
@@ -116,32 +137,45 @@ class LCInterp:
         return self._flux_err
 
     def to_phot(self) -> Photometry:
-        df = pd.DataFrame({'mag': self.mag, 'mag_err': self.mag_err, 'flux': self.flux, 'flux_err': self.flux_err,
-                           'jd': self.reference_times})
-        df['site'] = self._phot.site.unique()[0]
-        df['band'] = self.band.name
-        df['sub'] = True
+        df = pd.DataFrame(
+            {
+                "mag": self.mag,
+                "mag_err": self.mag_err,
+                "flux": self.flux,
+                "flux_err": self.flux_err,
+                "jd": self.reference_times,
+            }
+        )
+        df["site"] = self._phot.site.unique()[0]
+        df["band"] = self.band.name
+        df["sub"] = True
         return PhotFactory.from_df(df)
 
 
 class SNInterp:
-
-    def __init__(self, sn: SN, filters_dict: dict[str, Filter], reference_times: NDArray[float],
-                 interp_type: type[GPInterp] = PiscolaInterp) -> None:
+    def __init__(
+        self,
+        sn: SN,
+        filters_dict: Mapping[str, Filter],
+        reference_times: NDArray[np.float64],
+        interp_type: type[GPInterp] = PiscolaInterp,
+    ) -> None:
         self.filters_dict = filters_dict
         self.reference_times = reference_times
         self.sn = sn
-        self.interp = interp_type(sn)
+        self.interp: GPInterp = interp_type(sn)
         self._sitemap = self.sn.sites.sites
 
-    def update_sitemap(self, phot: Photometry | pd.DataFrame) -> Photometry | pd.DataFrame:
+    def update_sitemap(
+        self, phot: Photometry | pd.DataFrame
+    ) -> Photometry | pd.DataFrame:
         new_sites = phot.site.unique()
         sites = Sites(sites=self._sitemap)
         for site in new_sites:
             if site not in sites:
                 new_site = sites.add_site(name=site)
                 self._sitemap[new_site.id] = new_site
-        phot.site = phot.site.apply(lambda x: sites[x].id)
+        phot.site = cast(pd.Series, phot.site.apply(lambda x: sites[x].id))
         sites = Sites(sites=self._sitemap.copy())
         for site in self._sitemap.values():
             if site.name not in new_sites:
@@ -149,11 +183,19 @@ class SNInterp:
         self._sitemap = sites.sites
         return phot
 
+    def _fix_df_for_phot(self, df: pd.DataFrame) -> pd.DataFrame:
+        df["sub"] = True
+        p0 = self.sn.phase_zero if self.sn.phase_zero is not None else df["jd"].iloc[0]
+        df["phase"] = df['jd'] - p0
+        return df
+
     def gp_interp(self) -> Photometry:
         df = self.interp()
-        df['sub'] = True
+        df = self._fix_df_for_phot(df)
         df = self.update_sitemap(df)
-        return PhotFactory.from_df(df)
+        if isinstance(df, pd.DataFrame):
+            return PhotFactory.from_df(df)
+        return df
 
     def lc_interp(self, phot: Optional[Photometry] = None) -> Photometry:
         if phot is None:
@@ -169,19 +211,30 @@ class SNInterp:
         interp_phot = self.gp_interp()
         interp_phot_ref = self.lc_interp(interp_phot)
         sn = self.sn
-        return SN.from_phot(interp_phot_ref, sn.name, sn.redshift, sn.sub_only, sn.phase_zero,
-                            sninfo=sn.sninfo, lims=sn.limits, sites=Sites(sites=self._sitemap))
+        return SN.from_phot(
+            interp_phot_ref,
+            sn.name,
+            sn.redshift,
+            sn.phase_zero,
+            sn.sub_only,
+            sninfo=sn.sninfo,
+            lims=sn.limits,
+            sites=Sites(sites=self._sitemap),
+        )
 
 
-def mag_to_flux(mag: ArrayLike, filt: SVOFilter, magsys=MagSys.AB) -> ArrayLike:
-    if magsys == 'AB':
-        mag = mag << u.ABmag
-        return mag.to(flam, equivalencies=u.spectral_density(filt.wave_eff))
+def mag_to_flux(
+    mag: QuantityArrayType, filt: SVOFilter, magsys=MagSys.AB
+) -> u.Quantity:
+    qmag = quantity_array(mag)
+    if magsys == "AB":
+        qmag = qmag << u.ABmag
+        return qmag.to(FLAM, equivalencies=u.spectral_density(filt.wave_eff))
     elif magsys != "Vega":
         raise ValueError("`magsys` has to be one of `AB` or `Vega`")
 
-    return 10 ** (mag / -2.5) * zero_point_flux(filt, magsys)
+    return 10 ** (qmag.value / -2.5) * zero_point_flux(filt, magsys)
 
 
-def mag_to_flux_err(mag_err: ArrayLike, flux: ArrayLike) -> ArrayLike:
-    return 2.303 * mag_err * flux
+def mag_to_flux_err(mag_err: QuantityArrayType, flux: QuantityArrayType) -> u.Quantity:
+    return 2.303 * quantity_array(mag_err) * quantity_array(flux)

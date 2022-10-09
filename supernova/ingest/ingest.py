@@ -5,9 +5,10 @@ from .ztf import collate_ztf_flows, collate_ztfphot, collate_ztfphot_limits
 from .utils import add_phot
 from .collators import (
     AbstractCollator, collate_ecsv, collate_csv, collate_json)
-from supernova.supernova import SN, SNInfo, Photometry
+from supernova.supernova import SN, SNInfo
+from supernova.photometry import Photometry
 from supernova.sites import Sites, flows_sites
-from typing import Optional, Any
+from typing import Generator, Mapping, Optional, Any
 from tempfile import TemporaryDirectory
 from contextlib import contextmanager
 
@@ -26,9 +27,9 @@ class DataIngestor:
     Base class for data ingestors.
     """
     def __init__(self, path: PathType,
-                 collators: Optional[dict[str, AbstractCollator]] = None,
-                 limits_collators: Optional[dict[str, AbstractCollator]] = None,
-                 sninfo: Optional[SNInfo] = None, sitemap: Optional[dict[int, str]] = None,
+                 collators: Optional[Mapping[str, AbstractCollator]] = None,
+                 limits_collators: Optional[Mapping[str, AbstractCollator]] = None,
+                 sninfo: Optional[SNInfo] = None, sitemap: Optional[Mapping[int, str]] = None,
                  **sninfo_kwargs: Any) -> None:
         """
         A class to collect data from a directory of files and create an SN object.
@@ -61,7 +62,7 @@ class DataIngestor:
         return list(self.path.glob('*'))
 
     @contextmanager
-    def tmpdir(self) -> TemporaryDirectory:
+    def tmpdir(self) -> Generator[TemporaryDirectory, None, None]:
         _tmpdir = TemporaryDirectory()
         self.tmp_path = Path(_tmpdir.name)
         try:
@@ -122,17 +123,18 @@ class DataIngestor:
                                         f"With defined data collators: {self.collators}")
 
             phot = phots[0]
-
+            sites = None
             if self.sitemap:
                 sites = Sites.from_sitemap({s: self.sitemap.get(s, str(s)) for s in phot.site.unique()})
-
+            
+            phot = phot.sorted()
             return SN.from_phot(
                 phot=phot,
                 name=self.sninfo.name,
                 redshift=self.sninfo.redshift,
                 sub_only=self.sninfo.sub_only,
                 phase_zero=self.sninfo.phase_zero,
-                lims=lims[0] if len(lims) > 0 else None,
+                limits=lims[0] if len(lims) > 0 else None,
                 sninfo=self.sninfo,
                 sites=sites,
                 **self.sninfo_kwargs)
@@ -142,7 +144,7 @@ class DataIngestor:
         return input(query)
 
 
-class GenericIngestor(DataIngestor):
+class GenericIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
                  **sninfo_kwargs: Any) -> None:
@@ -150,7 +152,31 @@ class GenericIngestor(DataIngestor):
         super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
 
 
-class FlowsIngestor(DataIngestor):
+class ECSVIngest(DataIngestor):
+    def __init__(self, path: PathType,
+                 sninfo: Optional[SNInfo] = None,
+                 **sninfo_kwargs: Any) -> None:
+        collators = {'ecsv': collate_ecsv}
+        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+
+
+class CSVIngest(DataIngestor):
+    def __init__(self, path: PathType,
+                 sninfo: Optional[SNInfo] = None,
+                 **sninfo_kwargs: Any) -> None:
+        collators = {'csv': collate_csv}
+        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+
+
+class JSONIngest(DataIngestor):
+    def __init__(self, path: PathType,
+                 sninfo: Optional[SNInfo] = None,
+                 **sninfo_kwargs: Any) -> None:
+        collators = {'json': collate_json}
+        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+
+
+class FlowsIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
                  sitemap: Optional[dict[int, str]] = flows_sites,

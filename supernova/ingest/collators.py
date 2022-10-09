@@ -1,25 +1,25 @@
 from typing import Protocol, Type, Callable, Optional
-
+from pathlib import Path
 import pandas as pd
 
 from .converters import Converter, GenericCSVConverter, GenericECSVConverter
 from .readers import (PathType, resolve_path, PhotReader, read_pandas_csv,
                       read_astropy_table_as_df_with_times_as_jd)
 from .utils import NEEDED_KEYS
-from ..supernova import Photometry, PhotFactory
+from supernova.photometry import Photometry, PhotFactory
 
 CollatorType = Callable[[PathType], Photometry]
 
 
 class AbstractCollator(Protocol):
+    path: PathType = 'Unset'  # last processed path.
+    converter: Type[Converter]
+    reader: PhotReader
+    processed_files: list[PathType]  # all processed files.
+    ignore: bool = True
 
     def __init__(self, converter: Type[Converter],
                  reader: PhotReader, ignore_processed: bool = True) -> None:
-        self.path = 'Unset'  # last processed path.
-        self.converter = converter
-        self.reader = reader
-        self.processed_files: list[PathType] = []  # all processed files.
-        self.ignore = ignore_processed
         raise NotImplementedError("This is an abstract Protocol class.")
 
     def __call__(self, path: PathType) -> Photometry:
@@ -32,7 +32,7 @@ class AbstractCollator(Protocol):
         ...
 
 
-class Collator:
+class Collator(AbstractCollator):
 
     def __init__(self, converter: Type[Converter],
                  reader: PhotReader, ignore_processed: bool = True) -> None:
@@ -54,7 +54,7 @@ class Collator:
         return self.reader(file)
 
     def collate(self, path: PathType) -> Photometry:
-        files = list(path.glob(self.converter.glob_str))
+        files = list(Path(path).glob(self.converter.glob_str))
         if len(files) == 0:
             raise FileNotFoundError(f"No files found in {path} with glob {self.converter.glob_str}")
         df = pd.concat([self.process(p) for p in files], ignore_index=True)

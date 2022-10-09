@@ -6,11 +6,10 @@ from typing import Optional
 import pandas as pd
 from astropy.time import Time
 
-from supernova import SN
-from supernova.ingest.utils import (
-    add_phot, update_sn, verify_columns)
-from supernova.supernova import Photometry, PhotFactory
+from supernova.supernova import SN
+from supernova.photometry import Photometry, PhotFactory
 from supernova.utils import StrEnum
+from .utils import add_phot, update_sn, verify_columns
 from .collators import Collator
 from .converters import BaseConverter, Converter
 from .readers import PathType, read_astropy_table, read_pandas_csv
