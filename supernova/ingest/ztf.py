@@ -17,11 +17,11 @@ from .readers import PathType, read_astropy_table, read_pandas_csv
 
 @dataclass(frozen=True)
 class ZTFFlowsConverter(BaseConverter, Converter):
-    glob_str: str = '-ztf.ecsv'
+    glob_str: str = '*ztf.ecsv'
     jd_col: str = 'time'
     mag_col: str = 'mag'
     mag_err_col: str = 'mag_err'
-    band_col: Optional[str] = 'photfilter'
+    band_col: str = 'photfilter'
     sub_col: Optional[str] = None
     site_col: Optional[str] = None
 
@@ -40,8 +40,7 @@ def read_ztf_flows(path: PathType) -> pd.DataFrame:
     Read a ZTF flows file and return a DataFrame.
     """
     at = read_astropy_table(path, fmt='ascii.ecsv')
-    at[ZTFFlowsConverter.jd_col] = Time(at[ZTFFlowsConverter.jd_col], format='mjd')
-    at[ZTFFlowsConverter.jd_col] = at[ZTFFlowsConverter.jd_col] + 2400000.5  # Convert MJD to JD
+    at[ZTFFlowsConverter.jd_col] = Time(at[ZTFFlowsConverter.jd_col], format='mjd').jd
     return at.to_pandas()
 
 
@@ -54,7 +53,7 @@ class ZTFPhotConverter(BaseConverter, Converter):
     jd_col: str = 'jd'
     mag_col: str = 'mag'
     mag_err_col: str = 'mag_err'
-    band_col: Optional[str] = 'filter'
+    band_col: str = 'filter'
     sub_col: Optional[str] = None
     site_col: Optional[str] = None
 

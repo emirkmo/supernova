@@ -138,7 +138,7 @@ class SNInfo:
 
         found = False
         coords: Optional[SkyCoord] = None
-        if redshift is not 0.0:
+        if redshift != 0.0:
             try:
                 coords = query_skycoord(name)
                 found = True
@@ -158,7 +158,7 @@ class SNInfo:
                 print(f"Could not get SNInfo from flows.")
 
         if found and coords is not None:
-            return cls(name, redshift, coords.ra.deg, coords.dec.deg, **kwargs)
+            return cls(name, redshift=redshift, ra=coords.ra.deg, dec=coords.dec.deg, **kwargs)
         
         raise ValueError(f"Could not get SNInfo for {name}.")
 

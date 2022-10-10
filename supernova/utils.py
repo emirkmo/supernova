@@ -10,7 +10,7 @@ from astropy.units.core import Unit, dimensionless_unscaled
 from numpy.typing import DTypeLike, NDArray
 from pandas import Series
 import numpy as np
-from urllib.errors import HTTPError
+from requests import HTTPError
 Number = int | float | Quantity
 PathType = Path | str
 
@@ -106,7 +106,7 @@ def get_flows_sninfo(snname: str) -> tuple[SkyCoord, float]:
     if snname.startswith("SN"):
         snname = snname[2:]
     sninfo = api.get_target(snname)
-    coords = SkyCoord(ra=sninfo["ra"], dec=sninfo["dec"], unit="deg", frame="icrs")
+    coords = SkyCoord(ra=sninfo["ra"], dec=sninfo["decl"], unit="deg", frame="icrs")
     redshift = sninfo["redshift"]
     return coords, redshift
 

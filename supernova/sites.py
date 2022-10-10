@@ -136,7 +136,7 @@ def get_flows_sites() -> SiteDict:
     flows_sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT', 0: 'ZTF'}
     try:
         api = tendrils_api()
-        sites = api.get_sites()
+        sites = api.get_all_sites()
         flows_sites = cast(SiteDict, {s['siteid']:s['sitename'] for s in sites})
         flows_sites[1] = 'LCOGT'
         flows_sites[0] = 'ZTF'
