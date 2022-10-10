@@ -31,8 +31,18 @@ dependencies = [
     "numdifftools",
     "emcee",
     "piscola",
-    "svo_filters"
+    "svo_filters",
+    "requests",
 ]
 
 [project.urls]
 Home = "https://github.com/emirkmo/supernova"
+
+[project.optional-dependencies]
+test = [
+    "pytest >=2.7.3",
+    "pytest-cov",
+]
+flows = [
+    "tendrils"
+]

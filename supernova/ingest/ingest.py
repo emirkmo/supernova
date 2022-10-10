@@ -7,7 +7,8 @@ from .collators import (
     AbstractCollator, collate_ecsv, collate_csv, collate_json)
 from supernova.supernova import SN, SNInfo
 from supernova.photometry import Photometry
-from supernova.sites import Sites, flows_sites
+from supernova.sites import Sites, flows_sites, SiteDict
+from enum import Enum
 from typing import Generator, Mapping, Optional, Any
 from tempfile import TemporaryDirectory
 from contextlib import contextmanager
@@ -29,7 +30,7 @@ class DataIngestor:
     def __init__(self, path: PathType,
                  collators: Optional[Mapping[str, AbstractCollator]] = None,
                  limits_collators: Optional[Mapping[str, AbstractCollator]] = None,
-                 sninfo: Optional[SNInfo] = None, sitemap: Optional[Mapping[int, str]] = None,
+                 sninfo: Optional[SNInfo] = None, sitemap: Optional[SiteDict] = None,
                  **sninfo_kwargs: Any) -> None:
         """
         A class to collect data from a directory of files and create an SN object.
@@ -147,41 +148,105 @@ class DataIngestor:
 class GenericIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
+                 sitemap: Optional[SiteDict] = None,
                  **sninfo_kwargs: Any) -> None:
         collators = GENERIC_COLLATORS
-        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+        super().__init__(path, collators, None, sninfo, sitemap, **sninfo_kwargs)
 
 
 class ECSVIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
+                 sitemap: Optional[SiteDict] = None,
                  **sninfo_kwargs: Any) -> None:
         collators = {'ecsv': collate_ecsv}
-        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+        super().__init__(path, collators, None, sninfo, sitemap, **sninfo_kwargs)
 
 
 class CSVIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
+                 sitemap: Optional[SiteDict] = None,
                  **sninfo_kwargs: Any) -> None:
         collators = {'csv': collate_csv}
-        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+        super().__init__(path, collators, None, sninfo, sitemap, **sninfo_kwargs)
 
 
 class JSONIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
+                 sitemap: Optional[SiteDict] = None,
                  **sninfo_kwargs: Any) -> None:
         collators = {'json': collate_json}
-        super().__init__(path, collators, None, sninfo, None, **sninfo_kwargs)
+        super().__init__(path, collators, None, sninfo, sitemap, **sninfo_kwargs)
 
 
 class FlowsIngest(DataIngestor):
     def __init__(self, path: PathType,
                  sninfo: Optional[SNInfo] = None,
-                 sitemap: Optional[dict[int, str]] = flows_sites,
+                 sitemap: Optional[SiteDict] = flows_sites,
                  **sninfo_kwargs: Any,) -> None:
         collators = PREDEFINED_COLLATORS
         limits_collators = PREDEFINED_LIMITS_COLLATORS
 
         super().__init__(path, collators, limits_collators, sninfo, sitemap, **sninfo_kwargs)
+
+
+
+class Ingestors(Enum):
+    flows = FlowsIngest
+    generic = GenericIngest
+    ecsv = ECSVIngest
+    csv = CSVIngest
+    json = JSONIngest
+
+
+
+def ingest_sn(path: PathType,
+              snname: str = 'SN1990Unknown',
+              ingestor: str | Ingestors = Ingestors.flows,
+              sninfo: Optional[SNInfo] = None,
+              sitemap: Optional[SiteDict] = None,
+              **sninfo_kwargs: Any) -> SN:
+    """
+    Ingest a SN from a directory of data.
+    
+    Parameters
+    ----------
+    path: str | Path
+        The path to the directory of data.
+    snname: str
+        The name of the SN.
+    ingestor: str | Ingestors = Ingestors.flows
+        The ingestor to use. Can be a string or an Ingestors enum. Flows is the default.
+    sninfo: Optional[SNInfo] = None
+        An SNInfo object to use for the SN. If None, will create via query.
+    sitemap: Optional[dict[int, str]] = None
+        A dictionary mapping site numbers to site names. Uses FLOWS sites by default if ingestor is flows.
+        Pass None to have them automatically generated from the files. (Will check for file ending in _sites,
+        and if not found, will use the site numbers in the photometry file. If photometry file has sitenames
+        instead of numbers, will use those.)
+        Else pass a dictionary mapping site numbers to site names. Remember that photometry files must have
+        the corresponding site numbers for each telescope in every row.
+    sninfo_kwargs: Any
+        Any additional kwargs to pass to the SNInfo constructor.
+        Such as redshift, phase_zero, sub_only, etc. Redshift will be looked up from flows if possible and not passed.
+        tendrils must be installed for this.
+    """
+    if isinstance(ingestor, str):
+        ingestor = Ingestors[ingestor]
+
+    redshift = sninfo_kwargs.pop('redshift', 0.0)
+    if isinstance(redshift, str):
+        redshift = float(redshift) # try to convert to float
+    if not isinstance(redshift, float):
+        raise TypeError(f"redshift must be a float or a string that can be converted to a float. Got {redshift}.")
+
+    if sninfo is None:
+        sninfo = SNInfo.from_name(snname, redshift=redshift, **sninfo_kwargs)
+
+    
+    if ingestor == Ingestors.flows:
+        sitemap = flows_sites if sitemap is None else sitemap
+    
+    return ingestor.value(path, sninfo, sitemap, **sninfo_kwargs).load_sn()

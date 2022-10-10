@@ -1,13 +1,16 @@
 import enum
 
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Sequence, TypeGuard, cast, Protocol, overload
 from dataclasses import Field
+from astropy.coordinates.sky_coordinate import SkyCoord
 from astropy.units.quantity import Quantity
 from astropy.units.core import Unit, dimensionless_unscaled
 from numpy.typing import DTypeLike, NDArray
 from pandas import Series
 import numpy as np
+from urllib.errors import HTTPError
 Number = int | float | Quantity
 PathType = Path | str
 
@@ -83,3 +86,31 @@ class VerbosePrinter:
         self.print(*args, **kwargs)
 
 FloatArr = NDArray[np.float64]
+
+
+def tendrils_api() -> ModuleType:
+    """Use tendrils to access FLOWS API if
+    optional dependency tendrils is installed.
+    """
+    try:
+        from tendrils import api
+    except ImportError:
+        raise ImportError("tendrils is not installed. To connect to FLOWS database,"
+                          "install tendrils with `pip install tendrils`.")
+
+    return api    
+
+def get_flows_sninfo(snname: str) -> tuple[SkyCoord, float]:
+    """Get SN info from FLOWS database."""
+    api = tendrils_api()
+    if snname.startswith("SN"):
+        snname = snname[2:]
+    sninfo = api.get_target(snname)
+    coords = SkyCoord(ra=sninfo["ra"], dec=sninfo["dec"], unit="deg", frame="icrs")
+    redshift = sninfo["redshift"]
+    return coords, redshift
+
+
+def is_http_error(err: Exception) -> TypeGuard[HTTPError]:
+    """Check if an exception is an HTTPError."""
+    return hasattr(err, "response")
