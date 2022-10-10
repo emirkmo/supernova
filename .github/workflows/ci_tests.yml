@@ -29,10 +29,10 @@ jobs:
       uses: jannekem/run-python-script-action@v1.3
       with:
         script: |
-        import os
-        from tendrils.utils import set_api_token
-        token = os.environ["FLOWS_TOKEN"]
-        set_api_token(token)
+          import os
+          from tendrils.utils import set_api_token
+          token = os.environ["FLOWS_TOKEN"]
+          set_api_token(token)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FLOWS_TOKEN: ${{ secrets.FLOWS_API_TOKEN }}
