@@ -11,10 +11,12 @@ import numpy as np
 import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.cosmology import Cosmology, WMAP5, realizations  # type: ignore
-
 # noinspection PyProtectedMember
 from astropy.coordinates.name_resolve import NameResolveError
-from .utils import Number, VerbosePrinter
+from requests.exceptions import HTTPError as RequestsHTTPError
+from urllib.error import HTTPError
+
+from .utils import Number, VerbosePrinter, get_flows_sninfo, is_http_error
 from .filters import (BandsType, Filter, FilterSorter, PISCO_FILTER_PATH, SVOFilter, make_bands)
 from .sites import Sites
 from .photometry import (
@@ -58,7 +60,6 @@ class SNInfo:
             return SkyCoord(
                 ra_s, dec_s, unit=(u.hourangle, u.deg), frame="icrs", equinox="J2000"
             )
-
         coords = None
         if isinstance(self.ra, str) and isinstance(self.dec, str):
             coords = from_str(self.ra, self.dec)
@@ -131,6 +132,35 @@ class SNInfo:
         df = pd.read_csv(csv, index_col=0).squeeze("columns")
         df = force_numeric_sninfo(df)
         return cls.from_dict(df.to_dict())
+
+    @classmethod
+    def from_name(cls, name: str, redshift: float = 0.0, **kwargs: Any) -> "SNInfo":
+
+        found = False
+        coords: Optional[SkyCoord] = None
+        if redshift != 0.0:
+            try:
+                coords = query_skycoord(name)
+                found = True
+            except NameResolveError:
+                coords = None
+                print(f"Could not resolve {name} to coordinates from SkyCoord Sesame.")
+            
+        if not found:
+            try:
+                coords, redshift = get_flows_sninfo(name)
+                found = True
+            except (RequestsHTTPError, HTTPError, ImportError) as e:
+                if is_http_error(e):
+                    print(f"{e.response.status_code}: {e.response.reason} for url {e.response.url}")
+                elif isinstance(e, ImportError):
+                    print(f"Could not import tendrils. Please install it to use this feature. got: {e}")
+                print(f"Could not get SNInfo from flows.")
+
+        if found and coords is not None:
+            return cls(name, redshift=redshift, ra=coords.ra.deg, dec=coords.dec.deg, **kwargs)
+        
+        raise ValueError(f"Could not get SNInfo for {name}.")
 
     def __setitem__(self, key, value):
         setattr(self, key, value)
@@ -587,218 +617,13 @@ def force_numeric_sninfo(sninfo: pd.Series) -> pd.Series:
     return _sninfo
 
 
-#
-# @dataclass
-# class AbstractBasePhot(ABC):
-#     """Abstract Photometry dataclass"""
-#     jd: pd.Series
-#     band: pd.Series
-#     filter: pd.Series
-#     phase: pd.Series
-#     sub: pd.Series
-#     site: pd.Series
-#
-#     # restframe: pd.Series
-#
-#     def __post_init__(self):
-#         if self.__class__ == AbstractBasePhot:
-#             raise TypeError("Cannot instantiate abstract class.")
-#
-#     @abstractmethod
-#     def _fill_missing(self) -> None:
-#         pass
-#
-#     @abstractmethod
-#     def calc_phases(self, phase_zero: Number) -> None:
-#         pass
-#
-#     @abstractmethod
-#     def restframe_phases(self, redshift: Number) -> pd.Series:
-#         pass
-#
-#     @abstractmethod
-#     def masked(self, cond: list) -> 'AbstractPhotometry':
-#         pass
-#
-#     @abstractmethod
-#     def as_dataframe(self) -> pd.DataFrame:
-#         pass
-#
-#     @classmethod
-#     @abstractmethod
-#     def from_dict(cls, d: dict) -> 'AbstractPhotometry':
-#         pass
-#
-#     @abstractmethod
-#     def __len__(self):
-#         pass
-#
-#
-# @dataclass
-# class AbstractMagPhot(ABC):
-#     mag: pd.Series
-#     mag_err: pd.Series
-#
-#     def __post_init__(self):
-#         if self.__class__ == AbstractMagPhot:
-#             raise TypeError("Cannot instantiate abstract class.")
-#
-#     @abstractmethod
-#     def absmag(self, dm: Number, ext: Number) -> pd.Series:
-#         pass
-#
-#
-# @dataclass
-# class AbstractFluxPhot(ABC):
-#     flux: pd.Series
-#     flux_err: pd.Series
-#
-#     def __post_init__(self):
-#         if self.__class__ == AbstractFluxPhot:
-#             raise TypeError("Cannot instantiate abstract class.")
-#
-#
-# @dataclass
-# class AbstractPhot(ABC):
-#     flux: pd.Series
-#     flux_err: pd.Series
-#     mag: pd.Series
-#     mag_err: pd.Series
-#
-#
-# @dataclass
-# class AbstractLumPhot(ABC):
-#     lum: pd.Series
-#     lum_err: pd.Series
-#
-#
-# @dataclass
-# class AbstractBBLumPhot(ABC):
-#     radius: pd.Series
-#     radius_err: pd.Series
-#     temp: pd.Series
-#     temp_err: pd.Series
-#
-#
-# @dataclass
-# class AbstractPhotometry(AbstractMagPhot, AbstractFluxPhot,
-#                          AbstractLumPhot, AbstractBBLumPhot, AbstractBasePhot, ABC):
-#     pass
-#
-#
-# @dataclass
-# class BasePhot(AbstractBasePhot):
-#     jd: pd.Series = field(default=pd.Series(dtype=float))
-#     band: pd.Series = field(default=pd.Series(dtype=str))
-#     phase: pd.Series = field(default=pd.Series(dtype=float))
-#     sub: pd.Series = field(default=pd.Series(dtype=bool))
-#     site: pd.Series = field(default=pd.Series(dtype=int))
-#     # only for backwards compatibility do not access directly as it overrides builtin filter.
-#     filter: pd.Series = field(default=pd.Series(dtype=str))
-#
-#     # restframe: pd.Series = field(default=pd.Series(dtype=float))
-#
-#     def __post_init__(self):
-#         if 0 < len(self.filter) == len(self):
-#             warnings.warn("Phot: `filter` is deprecated, use `band` instead", DeprecationWarning)
-#             self.band = self.filter
-#
-#         if len(self.band) != len(self):
-#             raise ValueError("Either band or filter must be given the same length as jd."
-#                              f"Got band: {len(self.band)}, "
-#                              f"filter: {len(self.filter)}, jd: {len(self)}")
-#         self.filter = self.band
-#         # @TODO: remove this try/except after tests.
-#         try:
-#             self._fill_missing()
-#         except Exception as e:
-#             warnings.warn(f"Could not fill missing values of {self.__class__}: {e}")
-#
-#     def _fill_missing(self) -> None:
-#         if len(self) == 0:
-#             return
-#         for _field in fields(self):
-#
-#             if len(getattr(self, _field.name)) == 0:
-#                 dtype, default = get_field_dtype_default(_field)
-#                 setattr(self, _field.name,
-#                         pd.Series([default] * len(self), dtype=dtype, name=_field.name))
-#
-#     def calc_phases(self, phase_zero):
-#         self.phase = self.jd - phase_zero
-#
-#     def restframe_phases(self, redshift):
-#         if self.phase is None:
-#             raise AttributeError("self.phase must not be None, "
-#                                  "calculate it first using calc_phases with a phase_zero")
-#         return self.phase / (1 + redshift)
-#
-#     @classmethod
-#     def from_dict(cls, d: dict):
-#         if cls == BasePhot:
-#             raise TypeError("Cannot instantiate Base class. Use a subclass.")
-#         return cls(**{k: v for k, v in d.items() if k in [f.name for f in fields(cls)]})
-#
-#     def masked(self, cond: list):
-#         d2 = {name: value[cond] for name, value in asdict(self).items()}
-#         return self.from_dict(d2)
-#
-#     def as_dataframe(self) -> pd.DataFrame:
-#         return pd.DataFrame(asdict(self))
-#
-#     def __len__(self):
-#         return len(self.jd)
-#
-#
-# @dataclass
-# class MagPhot(BasePhot, AbstractMagPhot):
-#     mag: pd.Series = field(default=pd.Series(dtype=float))
-#     mag_err: pd.Series = field(default=pd.Series(dtype=float))
-#
-#     def absmag(self, dm: Number, ext: Number) -> pd.Series:
-#         return self.mag - dm - ext
-#
-#
-# @dataclass
-# class FluxPhot(BasePhot, AbstractFluxPhot):
-#     flux: pd.Series = field(default=pd.Series(dtype=float))
-#     flux_err: pd.Series = field(default=pd.Series(dtype=float))
-#
-#     @staticmethod
-#     def mag_to_flux(mag: ArrayLike, filt: Filter) -> ArrayLike:
-#         return 10 ** (mag / -2.5) * filt.zp
-#
-#     @staticmethod
-#     def mag_to_flux_err(mag_err: ArrayLike, flux: ArrayLike) -> ArrayLike:
-#         return 2.303 * mag_err * flux
-#
-#
-# @dataclass
-# class Phot(FluxPhot, MagPhot, AbstractPhot):
-#     mag: pd.Series = field(default=pd.Series(dtype=float))
-#     mag_err: pd.Series = field(default=pd.Series(dtype=float))
-#     flux: pd.Series = field(default=pd.Series(dtype=float))
-#     flux_err: pd.Series = field(default=pd.Series(dtype=float))
-#
-#     @classmethod
-#     def from_magphot(cls, magphot: AbstractMagPhot, band: Filter) -> 'Phot':
-#         flux = cls.mag_to_flux(magphot.mag, band)
-#         flux_err = cls.mag_to_flux_err(magphot.mag_err, flux)
-#         return cls.from_dict(asdict(magphot) | {"flux": flux, "flux_err": flux_err})
-#
-#
-# @dataclass
-# class LumPhot(Phot, AbstractLumPhot):
-#     lum: pd.Series = field(default=pd.Series(dtype=float))
-#     lum_err: pd.Series = field(default=pd.Series(dtype=float))
-#
-#
-# @dataclass
-# class BBLumPhot(LumPhot, AbstractBBLumPhot):
-#     radius: pd.Series = field(default=pd.Series(dtype=float))
-#     radius_err: pd.Series = field(default=pd.Series(dtype=float))
-#     temp: pd.Series = field(default=pd.Series(dtype=float))
-#     temp_err: pd.Series = field(default=pd.Series(dtype=float))
-#
-#
-# Photometry = FluxPhot | MagPhot | Phot | LumPhot | BBLumPhot
+def query_skycoord(name: str) -> SkyCoord:
+    if not name.startswith("SN"):
+        warnings.warn(f"Name {name} does not start with SN. Add SN to name if SkyCoord query fails.")
+    try:
+        coords: SkyCoord = SkyCoord.from_name(name)
+    except NameResolveError as e:
+        warnings.warn(f"Could not resolve name {name} to a SkyCoord. {e}")
+        raise e
+    return coords
+    

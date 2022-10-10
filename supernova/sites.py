@@ -1,14 +1,16 @@
 from dataclasses import dataclass, asdict, field, fields
-from typing import Any, TypeVar, Mapping, Optional, Collection, cast
+from typing import Any, MutableMapping, TypeVar, Optional, Collection, cast
+import warnings
 
 import numpy as np
 import pandas as pd
 from typing_extensions import Unpack, TypedDict, NotRequired
 
 from supernova.photometry import Photometry
+from supernova.utils import tendrils_api
 
 SiteType = TypeVar('SiteType', int, str)
-SiteDict = Mapping[int, str]
+SiteDict = MutableMapping[int, str]
 
 
 @dataclass
@@ -130,6 +132,20 @@ class Sites:
         return cls.from_dict(cast(dict[int, SiteKeys], df.to_dict('index')))
 
 
-flows_sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT', 0: 'ZTF'}
-site_markers = {1: 's', 5: 'd', 8: 'v', 0: 'o'}
-site_err_scales = {1: 2, 5: 2, 8: 5, 0: 1}
+def get_flows_sites() -> SiteDict:
+    flows_sites = {8: 'LT', 5: 'NOT', 1: 'LCOGT', 0: 'ZTF'}
+    try:
+        api = tendrils_api()
+        sites = api.get_all_sites()
+        flows_sites = cast(SiteDict, {s['siteid']:s['sitename'] for s in sites})
+        flows_sites[1] = 'LCOGT'
+        flows_sites[0] = 'ZTF'
+    except ImportError:
+        warnings.warn("tendrils_api not found, using default flows_sites")
+    
+    return flows_sites
+    
+
+flows_sites = get_flows_sites()
+site_markers: SiteDict = {1: 's', 5: 'd', 8: 'v', 0: 'o'}
+site_err_scales: dict[int, int] = {1: 2, 5: 2, 8: 5, 0: 1}
