@@ -16,6 +16,7 @@ def ingest_20lao() -> SN:
     sn.phases['discovery'] = 2458994.9131366
     sn.phases['peak_r'] = 2459001.7783796
     sn.phases['peak_g'] = 2459001.8907986
+    sn.phases['rmax_contardo'] = 2459005.53340251 # from Contardo fit
     sn.to_csv('./')
     return sn
 

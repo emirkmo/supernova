@@ -142,7 +142,7 @@ class SNInfo:
 def sn_factory(
     phot: pd.DataFrame | Photometry,
     sninfo: pd.Series | SNInfo | dict,
-    limits: pd.DataFrame | Photometry | None,
+    limits: Optional[pd.DataFrame | Photometry] = None,
     phases: Optional[pd.Series | dict] = None,
     bands: Optional[BandsType] = None,
     sites: Optional[Sites] = None,
