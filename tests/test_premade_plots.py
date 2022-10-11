@@ -1,9 +1,9 @@
 from typing import cast
-from supernova.ingest import ingest_sn, Ingestors
-from supernova import SN, SNInfo
-from supernova.photometry import ImplementsMag
-import supernova.plotting as plot
-from supernova.plotting.plot_lc import _get_legend_handles_labels
+from astrosn.ingest import ingest_sn, Ingestors
+from astrosn import SN, SNInfo
+from astrosn.photometry import ImplementsMag
+import astrosn.plotting as plot
+from astrosn.plotting.plot_lc import _get_legend_handles_labels
 from pytest import fixture
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes

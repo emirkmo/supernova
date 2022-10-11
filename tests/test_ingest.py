@@ -1,7 +1,7 @@
-from supernova.ingest import ingest_sn, Ingestors
-from supernova import SN, Site
-import supernova.plotting as plot
-from supernova.plotting.plot_lc import _get_legend_handles_labels
+from astrosn.ingest import ingest_sn, Ingestors
+from astrosn import SN, Site
+import astrosn.plotting as plot
+from astrosn.plotting.plot_lc import _get_legend_handles_labels
 import matplotlib.pyplot as plt
 
 def test_flows_ingest() -> SN:
