@@ -1,9 +1,9 @@
-from supernova import Photometry
+from astrosn import Photometry
 from typing import get_args
 import pandas as pd
 from dataclasses import fields
 
-from supernova.photometry import BBLumPhot, FluxPhot, LumPhot, MagPhot, Phot, PhotFactory
+from astrosn.photometry import BBLumPhot, FluxPhot, LumPhot, MagPhot, Phot, PhotFactory
 
 
 phot_classes = [MagPhot, FluxPhot, LumPhot, Phot, BBLumPhot]
