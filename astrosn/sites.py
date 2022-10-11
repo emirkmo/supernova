@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 from typing_extensions import Unpack, TypedDict, NotRequired
 
-from astrosn.photometry import Photometry
-from astrosn.utils import tendrils_api
+from .photometry import Photometry
+from .utils import tendrils_api
 
 SiteType = TypeVar('SiteType', int, str)
 SiteDict = MutableMapping[int, str]

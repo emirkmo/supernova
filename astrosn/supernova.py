@@ -3,9 +3,7 @@ import os
 import warnings
 from dataclasses import dataclass, field, fields, asdict, replace
 from pathlib import Path
-from typing import Collection, Hashable, Union, Optional, Any, Mapping, cast
-from collections.abc import MutableSequence
-from typing_extensions import NotRequired, Self
+from typing import Union, Optional, Any, Mapping, cast
 import astropy.units as u
 import numpy as np
 import pandas as pd
