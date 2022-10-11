@@ -36,7 +36,7 @@ def load_06aj() -> SN:
     sninfo_06aj['dm'] = WMAP5.distmod(sninfo_06aj['z']).value
     sninfo_06aj = SNInfo.from_dict(sninfo_06aj)
 
-    path = Path('~/Dropbox/SN2020lao/emir/20lao/Tables/06aj').expanduser()
+    path = Path('comparison_data/06aj').expanduser()
     dfs = []
     for filt in filters:
         df = read_astropy_table_as_df_with_times_as_jd(path / f'{filt}_06aj.ecsv')
@@ -72,7 +72,7 @@ def load_98bw() -> SN:
 
     sninfo_98bw = SNInfo.from_dict(sninfo_98bw)
     sninfo_98bw.dm = WMAP5.distmod(sninfo_98bw.redshift).value
-    path98 = Path('~/Dropbox/SN2020lao/emir/20lao/Tables/98bw/').expanduser()
+    path98 = Path('comparison_data/98bw/').expanduser()
 
     sn98bw = DataIngestor(path98, collators={'csv': collate_csv}, sninfo=sninfo_98bw, sitemap={1: 'lit'}).load_sn()
     sn98bw.set_phases()
@@ -135,7 +135,7 @@ def add_max(sn: SN, band: str = 'R') -> SN:
     return sn
 
 def read_ptf() -> pd.DataFrame:
-    savedf = pd.read_json(Path('~/Dropbox/SN2020lao/emir/20lao/Photometry/icbl_comp.json').expanduser())
+    savedf = pd.read_json(Path('comparison_data/icbl_comp.json').expanduser())
     savedf.columns = ['X','Y','Z','marker','color','modX','modY']
     savedf['markersize']=6
     savedf['color'] = 'grey'
