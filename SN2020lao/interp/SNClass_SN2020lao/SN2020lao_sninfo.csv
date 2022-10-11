@@ -1,0 +1,10 @@
+,0
+name,SN2020lao
+redshift,0.03112
+phase_zero,2458994.63
+ra,256.72750833333333
+dec,30.27148611111111
+ebv,0.0436
+dm,35.6699644706
+cosmology,WMAP5
+sub_only,True
