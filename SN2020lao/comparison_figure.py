@@ -86,8 +86,8 @@ def ingest_lcs_get_restframe_SNe():
     sn06aj = load_06aj()
     sn20lao = SN.from_csv('SNClass_SN2020lao/')
 
-    sn06aj.to_csv()
-    sn98bw.to_csv()
+    sn06aj.to_csv('./')
+    sn98bw.to_csv('./')
 
 
     # Restframe R band comparison
@@ -116,7 +116,7 @@ def plot_rband_comparison():
     plot.label_axis(ax, xlabel='Days since explosion', ylabel='Absolute magnitude')
     
     fig.tight_layout()
-    fig.savefig('rband_comp.pdf', dpi=200, format='pdf')
+    fig.savefig('figures/rband_comp.pdf', dpi=200, format='pdf')
     fig.show()
 
 def get_max(mag: Photometry) -> tuple[float, float]:
@@ -230,7 +230,7 @@ def plot_rband_abs():
     plot.format_axis(ax, invert=True, xlim=(-40, 70), ylim=(-0.35,3.0))
     plot.label_axis(ax, xlabel='Restframe days since R/r max', ylabel='$\Delta Mag$')
     
-    fig.savefig('rband_abs_comp.pdf', dpi=200, format='pdf')
+    fig.savefig('figures/rband_abs_comp.pdf', dpi=200, format='pdf')
     fig.show()
 
 
