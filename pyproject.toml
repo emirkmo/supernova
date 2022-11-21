@@ -84,7 +84,7 @@ use_parentheses = true
 ensure_newline_before_comments = true
 
 [tool.pytest.ini_options]
-addopts = "--cov=astrosn --cov-report=term-missing --cov-report=html --cov-report=annotate"
+addopts = "--cov=astrosn --cov-report=term-missing --cov-report=html"
 python_files = "test_*.py"
 testpaths = "tests"
 
