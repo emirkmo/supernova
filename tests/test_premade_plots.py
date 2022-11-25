@@ -1,28 +1,34 @@
 from typing import cast
-from astrosn.ingest import ingest_sn, Ingestors
-from astrosn import SN, SNInfo
-from astrosn.photometry import ImplementsMag
-import astrosn.plotting as plot
-from astrosn.plotting.plot_lc import _get_legend_handles_labels
-from pytest import fixture
-from matplotlib.figure import Figure
+
+import matplotlib.pyplot as plt
+import pytest
+import warnings
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from pytest import fixture
+
+import astrosn.plotting as plot
+from astrosn import SN, SNInfo
+from astrosn.ingest import Ingestors, ingest_sn
+from astrosn.photometry import ImplementsMag
+from astrosn.plotting.plot_lc import _get_legend_handles_labels
+
 
 @fixture(scope="module")
 def sn() -> SN:
-    sn = ingest_sn("inputs/2021aess/", "SN2021aess", Ingestors.flows)
+    sn = ingest_sn("tests/inputs/2021aess/", "SN2021aess", Ingestors.flows)
     sn.sub_only = False
     sn.sninfo.sub_only = False
     return sn.restframe()
 
 
-def test_flows_plot(sn: SN) -> None:
+def test_unit_flows_plot(sn: SN) -> None:
     plotpars = plot.AbsMagPlotParams
     plotpars.label_sites = False
     plotpars.split_by_site = False
-    fig, ax = plot.plot_flows_absmag(sn, shift=False)
+    fig, ax, secax = plot.plot_flows_absmag(sn, shift=False)
     handles, labels = _get_legend_handles_labels(ax.legend_)
-    
+
     assert isinstance(fig, Figure)
     assert isinstance(ax, Axes)
     assert len(labels) == 9
@@ -36,7 +42,7 @@ def test_flows_plot(sn: SN) -> None:
 
     plotpars.label_sites = True
     plotpars.split_by_site = True
-    fig, ax = plot.plot_flows_absmag(sn, shift=False)
+    fig, ax, secax = plot.plot_flows_absmag(sn, shift=False)
     handles, labels = _get_legend_handles_labels(ax.legend_)
 
     assert isinstance(fig, Figure)
@@ -49,7 +55,7 @@ def test_flows_plot(sn: SN) -> None:
         magphot = cast(ImplementsMag, sn.band(b))
         if len(magphot.mag.dropna()) > 0:
             assert f"${b}$" in labels
- 
+
 
 def test_functional_flows_phot(sn: SN) -> None:
     fig, ax = plot.make_single_figure()
@@ -73,3 +79,21 @@ def test_functional_flows_phot(sn: SN) -> None:
 
     assert isinstance(fig, Figure)
     assert isinstance(ax, Axes)
+
+
+@pytest.mark.mpl_image_compare
+def test_plot_flows_absmag_split(sn: SN) -> Figure:
+    plotpars = plot.AbsMagPlotParams
+    plotpars.label_sites = True
+    plotpars.split_by_site = True
+    fig, ax, secax = plot.plot_flows_absmag(sn, shift=False)
+    return fig
+
+
+@pytest.mark.mpl_image_compare
+def test_plot_flows_absmag_unlabeled(sn: SN) -> Figure:
+    plotpars = plot.AbsMagPlotParams
+    plotpars.label_sites = False
+    plotpars.split_by_site = False
+    fig, ax, secax = plot.plot_flows_absmag(sn, plotpars=plotpars, shift=True)
+    return fig

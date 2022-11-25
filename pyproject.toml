@@ -42,6 +42,13 @@ Home = "https://github.com/emirkmo/supernova"
 test = [
     "pytest >=2.7.3",
     "pytest-cov",
+    "pytest-mpl",
+    "flake8",
+    "black",
+    "isort",
+    "pre-commit",
+    "sphinx",
+    "mypy",
 ]
 flows = [
     "tendrils"
@@ -87,13 +94,17 @@ ensure_newline_before_comments = true
 addopts = "--cov=astrosn --cov-report=term-missing --cov-report=html"
 python_files = "test_*.py"
 testpaths = "tests"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning",
+    "ignore::RuntimeWarning",
+]
 
 [tool.mypy]
-python_version = 3.10
-warn_unused_configs = True
-show_error_codes = True
-pretty = True
-files = "astrosn"
+implicit_reexport = true
+pretty = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -112,6 +123,14 @@ module = [
     'matplotlib.patches.*',
     'matplotlib.offsetbox.*',
     'matplotlib.legend.*',
+    'seaborn.*',
+    'tendrils.*',
+    'tqdm.*',
+    'svo_filters.*',
+    'astroquery.*',
+    'specutils.*',
+    'piscola.*',
+    'dust_extinction.*',
 ]
 ignore_missing_imports = true
 ignore_errors = true

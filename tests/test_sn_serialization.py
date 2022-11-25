@@ -1,2 +1,1 @@
-from astrosn import SN, SNSerializer, SNInfo
-
+from astrosn import SN, SNInfo, SNSerializer

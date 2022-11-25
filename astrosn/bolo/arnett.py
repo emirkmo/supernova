@@ -46,7 +46,7 @@ def func_A(z, tau_m):
     y = get_y(tau_m)
     # return 2*z*np.exp((-2*z*y) + z**2)
     # print(2*z)
-    TempA = mp.log(2 * z) - 2 * z * y + z ** 2
+    TempA = mp.log(2 * z) - 2 * z * y + z**2
     # print(TempA)
     return mp.exp(TempA)
 
@@ -55,7 +55,7 @@ def func_B(z, tau_m):
     y = get_y(tau_m)
     s = get_s(tau_m)
 
-    TempB = mp.log(2 * z) + 2 * z * s - 2 * z * y + z ** 2
+    TempB = mp.log(2 * z) + 2 * z * s - 2 * z * y + z**2
     # print(TempB)
     return mp.exp(TempB)
     # return 2*z*np.exp(-2*z*y + 2*z*s + z**2)
@@ -77,7 +77,7 @@ def nonvector_L(t, *params):
 
     # print M_ej/Msun,M_ni/Msun,v_ph/kms,Term1,Term2,get_y(tau_m),get_s(tau_m),tau_m,x
 
-    lum = (M_ni * np.array(mp.exp(-x ** 2))) * ((Eni - Eco) * np.array(Term1) + (Eco * np.array(Term2))) / 1e43
+    lum = (M_ni * np.array(mp.exp(-(x**2)))) * ((Eni - Eco) * np.array(Term1) + (Eco * np.array(Term2))) / 1e43
 
     return lum * trapped(t * days, M_ej, v_ph)
 
@@ -87,11 +87,11 @@ L = np.vectorize(nonvector_L)
 
 # EK_model*(trapped(xdata))
 def get_Ek(M_ej, v_ph):
-    return (3 / 10) * M_ej * (v_ph ** 2)
+    return (3 / 10) * M_ej * (v_ph**2)
 
 
 def tau(t, M_ej, Ek):
-    T0 = np.sqrt((0.05305165 * Kappa * (M_ej ** 2)) / Ek)
+    T0 = np.sqrt((0.05305165 * Kappa * (M_ej**2)) / Ek)
     return (t / T0) ** (-2)
 
 
@@ -118,13 +118,11 @@ def get_model_at_x(x, x_full, M, N, V, E_exp) -> np.ndarray[float]:
 
 
 def get_Ek_err(M_ej, M_ej_err, v_ph, v_ph_err):
-    return get_Ek(M_ej, v_ph) * np.sqrt(((2*v_ph_err) / v_ph) ** 2 + (M_ej_err / M_ej) ** 2)
+    return get_Ek(M_ej, v_ph) * np.sqrt(((2 * v_ph_err) / v_ph) ** 2 + (M_ej_err / M_ej) ** 2)
 
 
 class RegularizedFit:
-
-    def __init__(self, params: Parameters, varied_params: list[str],
-                 lamb: float = 0):
+    def __init__(self, params: Parameters, varied_params: list[str], lamb: float = 0):
         self.lamb = lamb
         self.params = params
         self.varied_params = varied_params
@@ -133,17 +131,17 @@ class RegularizedFit:
     def set_regularization(self, params, iter, resid, *args, **kws) -> None:
         n_samples = len(resid)
         param = np.array([params[p].value for p in self.varied_params])
-        self.regularization = self.lamb * np.sum(param ** 2) / n_samples
+        self.regularization = self.lamb * np.sum(param**2) / n_samples
 
     def regularized_least_squares_cost(self, r: ArrayLike) -> float:
-        return np.sum(r ** 2) / 2 / len(r) + self.regularization
+        return np.sum(r**2) / 2 / len(r) + self.regularization
 
 
 def process_params(params: Parameters) -> tuple[float, float, float, float]:
-    mej = params['M_ej'].value * Msun
-    mni = params['M_ni'].value * Msun
-    e_exp = params['E_exp'].value
-    vph = params['V_ph'].value * kms10
+    mej = params["M_ej"].value * Msun
+    mni = params["M_ni"].value * Msun
+    e_exp = params["E_exp"].value
+    vph = params["V_ph"].value * kms10
     return mej, mni, e_exp, vph
 
 
@@ -163,15 +161,18 @@ def get_model(params: Parameters, x: ArrayLike) -> NDArray[np.float64]:
 
     return model_int
 
+
 # fix velocity fit
-def fit_func(params: Parameters, x: NDArray[np.float64], y: NDArray[np.float64],
-             weights: Optional[NDArray[np.float64]] = None) -> NDArray[np.float64]:
+def fit_func(
+    params: Parameters, x: NDArray[np.float64], y: NDArray[np.float64], weights: Optional[NDArray[np.float64]] = None
+) -> NDArray[np.float64]:
     model_int = get_model(params, x)
 
     resids = model_int - y  # minimize this
     if weights is not None:
         resids = resids * weights
     return resids
+
 
 @dataclass
 class ArnettParams:
@@ -196,55 +197,82 @@ class ArnettParams:
     @property
     def params(self) -> Parameters:
         params = Parameters()
-        params.add('M_ej', value=self.mej, min=self.mej_min, max=self.mej_max,
-                   vary=True, brute_step=self.mej_step)
-        params.add('delta', value=self.delta, max=self.delta_max, min=self.delta_min, vary=True,
-                   brute_step=self.delta_step)
-        params.add('M_ni', expr='M_ej*delta', vary=False)
-        params.add('E_exp', value=self.e_exp, max=self.e_exp_min, min=self.e_exp_max, vary=self.vary_e_exp,
-                   brute_step=self.e_exp_step)
-        params.add('V_ph', value=self.vph, vary=False)
+        params.add("M_ej", value=self.mej, min=self.mej_min, max=self.mej_max, vary=True, brute_step=self.mej_step)
+        params.add(
+            "delta", value=self.delta, max=self.delta_max, min=self.delta_min, vary=True, brute_step=self.delta_step
+        )
+        params.add("M_ni", expr="M_ej*delta", vary=False)
+        params.add(
+            "E_exp",
+            value=self.e_exp,
+            max=self.e_exp_min,
+            min=self.e_exp_max,
+            vary=self.vary_e_exp,
+            brute_step=self.e_exp_step,
+        )
+        params.add("V_ph", value=self.vph, vary=False)
         return params
 
 
 class LMFitMethod(StrEnum):
-    nelder = 'nelder'  # Nelder-Mead
-    leastsq = 'leastsq'  # Levenberg-Marquardt
-    least_squares = 'least_squares'  #  Trust Region Reflective
-    bfgs = 'bfgs'  # Broyden-Fletcher-Goldfarb-Shanno
-    brute = 'brute'  # brute force
-    lbfgsb = 'lbfgsb'  # L-BFGS-B
-    trust_constr = 'trust_constr'  # Trust Region Constrained
-    slsqp = 'slsqp'  # Sequential Least SQuares Programming
-    emcee = 'emcee'  # Markov Chain Monte Carlo
+    nelder = "nelder"  # Nelder-Mead
+    leastsq = "leastsq"  # Levenberg-Marquardt
+    least_squares = "least_squares"  #  Trust Region Reflective
+    bfgs = "bfgs"  # Broyden-Fletcher-Goldfarb-Shanno
+    brute = "brute"  # brute force
+    lbfgsb = "lbfgsb"  # L-BFGS-B
+    trust_constr = "trust_constr"  # Trust Region Constrained
+    slsqp = "slsqp"  # Sequential Least SQuares Programming
+    emcee = "emcee"  # Markov Chain Monte Carlo
 
 
-def fit_arnett(xdata: ArrayLike, ydata: ArrayLike, weights: Optional[ArrayLike] = None,
-               arnett_params: ArnettParams = ArnettParams(1.0, 15, 0.0), regularization: float = 0,
-               fit_emcee: bool = True, method: LMFitMethod | str = LMFitMethod.nelder) -> tuple[MinimizerResult, Optional[MinimizerResult]]:
+def fit_arnett(
+    xdata: ArrayLike,
+    ydata: ArrayLike,
+    weights: Optional[ArrayLike] = None,
+    arnett_params: ArnettParams = ArnettParams(1.0, 15, 0.0),
+    regularization: float = 0,
+    fit_emcee: bool = True,
+    method: LMFitMethod | str = LMFitMethod.nelder,
+) -> tuple[MinimizerResult, Optional[MinimizerResult]]:
     method = LMFitMethod(method)
     params = arnett_params.params
-    fitter = RegularizedFit(params, ['M_ej', 'delta'], lamb=regularization)
-    fit_result = minimize(fit_func, params, args=(xdata, ydata),
-                          kws={'weights': weights}, method=method, nan_policy='omit',
-                          iter_cb=fitter.set_regularization,
-                          reduce_fcn=fitter.regularized_least_squares_cost)
+    fitter = RegularizedFit(params, ["M_ej", "delta"], lamb=regularization)
+    fit_result = minimize(
+        fit_func,
+        params,
+        args=(xdata, ydata),
+        kws={"weights": weights},
+        method=method,
+        nan_policy="omit",
+        iter_cb=fitter.set_regularization,
+        reduce_fcn=fitter.regularized_least_squares_cost,
+    )
     emcee_result = None
     if fit_emcee:
         # Explore posterior using emcee
         # fit_result.params.add('__lnsigma', value=np.log(0.1), min=np.log(0.001), max=np.log(2))
         is_weighted = weights is not None
-        emcee_result = minimize(fit_func, fit_result.params, args=(xdata, ydata),
-                                kws={'weights': weights}, method='emcee',
-                                nan_policy='omit', is_weighted=is_weighted, progress=False,
-                                burn=300, steps=1000, thin=20,
-                                workers=max(min(multiprocessing.cpu_count()//2 + 3, 10), 1))
+        emcee_result = minimize(
+            fit_func,
+            fit_result.params,
+            args=(xdata, ydata),
+            kws={"weights": weights},
+            method="emcee",
+            nan_policy="omit",
+            is_weighted=is_weighted,
+            progress=False,
+            burn=300,
+            steps=1000,
+            thin=20,
+            workers=max(min(multiprocessing.cpu_count() // 2 + 3, 10), 1),
+        )
 
     return fit_result, emcee_result
 
 
 @dataclass
-class  ArnettModelFit(ModelFit):
+class ArnettModelFit(ModelFit):
     name: str = "Arnett"
     params: Parameters = field(default_factory=Parameters)
 
@@ -277,10 +305,10 @@ class  ArnettModelFit(ModelFit):
         raise KeyError(f"Parameter {__name} not found")
 
     def set_pars(self) -> None:
-        self.mej = self.params['M_ej'].value
-        self.mni = self.params['M_ni'].value
-        self.eexp = self.params['E_exp'].value
-        self.vph = self.params['V_ph'].value
+        self.mej = self.params["M_ej"].value
+        self.mni = self.params["M_ni"].value
+        self.eexp = self.params["E_exp"].value
+        self.vph = self.params["V_ph"].value
 
     def set_errors(self) -> None:
         self.mej_err = self.params["M_ej"].stderr
@@ -292,14 +320,14 @@ class  ArnettModelFit(ModelFit):
 
     def build_params(self) -> Parameters:
         params = Parameters()
-        params.add('M_ej', value=self.mej, vary=True)
-        params.add('delta', value=self.mni/self.mej, vary=True)
-        params.add('M_ni', expr='M_ej*delta', vary=False)
-        params.add('E_exp', value=self.eexp, vary=False)
-        params.add('V_ph', value=self.vph, vary=False)
+        params.add("M_ej", value=self.mej, vary=True)
+        params.add("delta", value=self.mni / self.mej, vary=True)
+        params.add("M_ni", expr="M_ej*delta", vary=False)
+        params.add("E_exp", value=self.eexp, vary=False)
+        params.add("V_ph", value=self.vph, vary=False)
 
         for par in params:
-            if par == 'delta':
+            if par == "delta":
                 continue
             params[par].stderr = getattr(self, f"{par.replace('_','').lower()}_err")
 
@@ -309,17 +337,19 @@ class  ArnettModelFit(ModelFit):
         return get_model(self.params, x)
 
     def to_json(self, path: PathType) -> None:
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(asdict(self), f, indent=4)
 
     @classmethod
     def from_json(cls, path: PathType) -> "ArnettModelFit":
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data = json.load(f)
         return cls(**data)
 
 
-def get_arnett_params(sn, phase_min: float = 0, phase_max: float = 10000, vph: float = 10., mej_init: float = 1) -> tuple[FloatArr, FloatArr, FloatArr, ArnettParams]:
+def get_arnett_params(
+    sn, phase_min: float = 0, phase_max: float = 10000, vph: float = 10.0, mej_init: float = 1
+) -> tuple[FloatArr, FloatArr, FloatArr, ArnettParams]:
     """Get the Arnett parameters for a SN
     vph: float = velocity of the ejecta in $10^4$ km/s
     mej_init: float = initial guess for the ejecta mass in solar masses

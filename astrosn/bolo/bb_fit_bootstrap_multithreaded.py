@@ -26,8 +26,6 @@ flux_units = u.erg / u.s / u.cm**2  # type: ignore
 MyArrayLike = ArrayLike | u.Quantity
 
 
-
-
 def bb_err(bb_fit: physical_models.BlackBody) -> u.Quantity:
     return (
         np.sqrt(
@@ -70,13 +68,10 @@ def fit_bb(
     more_precise: bool = False,
     fitter: fitting._FitterMeta = fitting.LevMarLSQFitter,
 ) -> physical_models.BlackBody:
-
     fitter = fitter(calc_uncertainties=True)
 
     if more_precise:
-        bb_fit = fitter(
-            bb_init, x, y * rescaling, epsilon=1e-18, acc=1e-15, maxiter=1000
-        )
+        bb_fit = fitter(bb_init, x, y * rescaling, epsilon=1e-18, acc=1e-15, maxiter=1000)
     else:
         bb_fit = fitter(bb_init, x, y * rescaling)
 
@@ -90,9 +85,7 @@ def get_bolo_flux(bb_fit: physical_models.BlackBody) -> u.Quantity:
     return bb_fit.bolometric_flux * np.pi
 
 
-def calculate_radius(
-    bb_scale: MyArrayLike, distance: u.Quantity = u.Quantity(10.0, unit=u.parsec)
-) -> u.Quantity:
+def calculate_radius(bb_scale: MyArrayLike, distance: u.Quantity = u.Quantity(10.0, unit=u.parsec)) -> u.Quantity:
     """
     `distance` should be the luminosity distance if the blackbody was fitted to apparent flux, else it
     is 10 parsec, i.e. the absolute magnitude distance.
@@ -123,9 +116,7 @@ def fast_get_parameters(
     return bb_fit.temperature.value, bb_fit.scale.value, get_bolo_flux(bb_fit).value  # type: ignore
 
 
-def bootstrap_mean_and_error(
-    x: ArrayLike, axis: Optional[int] = None
-) -> tuple[MyArrayLike, MyArrayLike]:
+def bootstrap_mean_and_error(x: ArrayLike, axis: Optional[int] = None) -> tuple[MyArrayLike, MyArrayLike]:
     return np.mean(x, axis=axis), np.std(x, axis=axis)
 
 
@@ -148,9 +139,7 @@ def bootstrap_parameters(
     # npr = (np.random.random_sample(n_samples) - 0.5) * 2 * sigma_unc
     npr = (np.random.random_sample((n_samples, len(flux))) - 0.5) * 2 * sigma_unc
 
-    flux_sr, bb_init, flux_normalization, rescaling = init_bb_fit(
-        flux, normalize_flux=normalize_flux
-    )
+    flux_sr, bb_init, flux_normalization, rescaling = init_bb_fit(flux, normalize_flux=normalize_flux)
 
     unc_sr = unc / np.pi / u.sr
     _pars = []
@@ -178,21 +167,15 @@ def multi_threaded_fit_with_bootstrap(
     normalize_flux: bool = False,
     threads: int = multiprocessing.cpu_count(),
 ) -> NDArray:
-
     if len(fluxes) == len(waves):
-        flux_iter = [
-            (f << flam, u << flam)
-            for f, u in zip(*as_zipped_iterable_array(fluxes, flux_uncs))
-        ]
+        flux_iter = [(f << flam, u << flam) for f, u in zip(*as_zipped_iterable_array(fluxes, flux_uncs))]
         n_rows = fluxes[0].shape[0]
     else:
         flux_iter = [(f << flam, u << flam) for f, u in zip(fluxes, flux_uncs)]
         n_rows = len(fluxes)
 
         if len(waves) != len(fluxes[0]):
-            raise ValueError(
-                "Number of wavelengths and fluxes must be equal, and in same order."
-            )
+            raise ValueError("Number of wavelengths and fluxes must be equal, and in same order.")
 
     pars = np.empty((n_rows, 8))
 
@@ -224,9 +207,7 @@ def make_qtable(pars: NDArray) -> QTable:
     )
 
 
-def as_zipped_iterable_array(
-    fluxes: list[NDArray], flux_uncs: list[NDArray]
-) -> tuple[NDArray, NDArray]:
+def as_zipped_iterable_array(fluxes: list[NDArray], flux_uncs: list[NDArray]) -> tuple[NDArray, NDArray]:
     return make_zipped_stacked(fluxes), make_zipped_stacked(flux_uncs)
 
 
@@ -237,40 +218,32 @@ def make_zipped_stacked(list_of_arrays: list[NDArray]) -> NDArray:
 def load_pandas_flux_table(filename: str) -> tuple[list[NDArray], list[NDArray]]:
     fluxes = pd.read_json(filename)
     fluxes.index = fluxes.index.to_julian_date()  # type: ignore
-    fluxes_zipped = list(
-        fluxes[[name for name in fluxes.columns if not name.endswith("err")]].values
-    )
-    errors_zipped = list(
-        fluxes[[name for name in fluxes.columns if name.endswith("err")]].values
-    )
+    fluxes_zipped = list(fluxes[[name for name in fluxes.columns if not name.endswith("err")]].values)
+    errors_zipped = list(fluxes[[name for name in fluxes.columns if name.endswith("err")]].values)
     return fluxes_zipped, errors_zipped
 
 
-def load_phot(phot: Photometry, bands: dict[str, Filter],
-              sorter: FilterSorter = FilterSorter()) -> tuple[u.Quantity, list[NDArray], list[NDArray], NDArray[float]]:
+def load_phot(
+    phot: Photometry, bands: dict[str, Filter], sorter: FilterSorter = FilterSorter()
+) -> tuple[u.Quantity, list[NDArray], list[NDArray], NDArray[float]]:
     bands = sorter.wave_sort(bands.values())
 
-    fluxes = [b.name+'_flux' for b in bands]
-    flux_uncs = [b.name+'_flux_err' for b in bands]
+    fluxes = [b.name + "_flux" for b in bands]
+    flux_uncs = [b.name + "_flux_err" for b in bands]
     waves = np.array([b.wave_eff.value for b in bands]) << u.AA
 
     df = phot.as_dataframe()
-    df = df.pivot(index='jd', columns='band', values=['flux', 'flux_err'])
+    df = df.pivot(index="jd", columns="band", values=["flux", "flux_err"])
     df.columns = [f"{col[1]}_{col[0]}" for col in df.columns]
     df = df[fluxes + flux_uncs]
 
-    fluxes_zipped = list(
-        df[[name for name in df.columns if not name.endswith("err")]].values
-    )
-    errors_zipped = list(
-        df[[name for name in df.columns if name.endswith("err")]].values
-    )
+    fluxes_zipped = list(df[[name for name in df.columns if not name.endswith("err")]].values)
+    errors_zipped = list(df[[name for name in df.columns if name.endswith("err")]].values)
     jds = df.index.values
     return waves, fluxes_zipped, errors_zipped, jds
 
 
-def fit_sn(sn: SN, quasi: bool = False, blackbody: bool = False, n_samples: int = 1000,
-           n_sigma: float = 2) -> SN:
+def fit_sn(sn: SN, quasi: bool = False, blackbody: bool = False, n_samples: int = 1000, n_sigma: float = 2) -> SN:
     """
     Fit the SN with a blackbody and/or quasi-blackbody model.
     Returns a copy of the SN with the fitted values
@@ -290,25 +263,25 @@ def fit_sn(sn: SN, quasi: bool = False, blackbody: bool = False, n_samples: int 
         # Setup
         fac.extend_phot(LumPhot)
         site_id = new_sn.sites.generate_id()
-        new_sn.add_site(bolo_filt.name, id=site_id, marker='o')
+        new_sn.add_site(bolo_filt.name, id=site_id, marker="o")
 
         # Fit
         qbt = bootstrap_quasi_bolo(
-            waves, np.array(fluxes), np.array(flux_uncs), n_samples=n_samples, sigma_unc=n_sigma,
-            distance=distance)
+            waves, np.array(fluxes), np.array(flux_uncs), n_samples=n_samples, sigma_unc=n_sigma, distance=distance
+        )
         # Save
 
-        qbt = qbt.to_pandas().rename({'F': 'flux', 'F_err': 'flux_err', 'L': 'lum', 'L_err': 'lum_err'}, axis=1)
-        qbt['jd'] = jds
-        qbt['band'] = bolo_filt.name
-        qbt['site'] = site_id
+        qbt = qbt.to_pandas().rename({"F": "flux", "F_err": "flux_err", "L": "lum", "L_err": "lum_err"}, axis=1)
+        qbt["jd"] = jds
+        qbt["band"] = bolo_filt.name
+        qbt["site"] = site_id
         fac.concat_phot(fac.from_df(qbt))
 
     if blackbody:
         # Setup
         fac.extend_phot(BBLumPhot)
         site_id = new_sn.sites.generate_id()
-        new_sn.add_site(blackbody_filt.name, id=site_id, marker='s')
+        new_sn.add_site(blackbody_filt.name, id=site_id, marker="s")
 
         # Fit
         print("Fitting blackbody to flux measurements")
@@ -322,18 +295,28 @@ def fit_sn(sn: SN, quasi: bool = False, blackbody: bool = False, n_samples: int 
                 sigma_unc=n_sigma,
                 distance=distance,  # type: ignore
                 normalize_flux=False,
-                threads=max(multiprocessing.cpu_count()-3, 1),
+                threads=max(multiprocessing.cpu_count() - 3, 1),
             )
 
         # Save
         print("Done: Saving results!")
         qt = make_qtable(fitted_params).to_pandas()
-        qt = qt.rename({'F': 'flux', 'F_err': 'flux_err', 'L': 'lum', 'L_err': 'lum_err',
-                        'R': 'radius', 'R_err': 'radius_err', 'T': 'temp', 'T_err': 'temp_err'},
-                       axis=1)
-        qt['jd'] = jds
-        qt['band'] = blackbody_filt.name
-        qt['site'] = site_id
+        qt = qt.rename(
+            {
+                "F": "flux",
+                "F_err": "flux_err",
+                "L": "lum",
+                "L_err": "lum_err",
+                "R": "radius",
+                "R_err": "radius_err",
+                "T": "temp",
+                "T_err": "temp_err",
+            },
+            axis=1,
+        )
+        qt["jd"] = jds
+        qt["band"] = blackbody_filt.name
+        qt["site"] = site_id
         fac.concat_phot(fac.from_df(qt))
 
     new_sn.phot = fac.sn_phot
@@ -355,9 +338,9 @@ def bootstrap_quasi_bolo(
     flux_errs = flux_errs << flam
     min_flux = fluxes.min() / 10
     bs_samples = (np.random.random((n_samples, *fluxes.shape)) - 0.5) * 2 * sigma_unc * flux_errs + fluxes
-        
+
     bs_samples[bs_samples < 0] = min_flux
-    bs_samples = np.trapz(bs_samples, waves) 
+    bs_samples = np.trapz(bs_samples, waves)
     bs_lums = calculate_luminosity(bs_samples, distance=distance)
 
     return QTable(

@@ -1,32 +1,34 @@
-from lib2to3.pgen2.token import OP
 import os
-import warnings
-from dataclasses import dataclass, field, fields, asdict, replace
-from pathlib import Path
-from typing import Union, Optional, Any, Mapping, cast
+from typing import Any, Mapping, Optional, Union, cast
+
 import astropy.units as u
 import numpy as np
 import pandas as pd
+import warnings
 from astropy.coordinates import SkyCoord
-from astropy.cosmology import Cosmology, WMAP5, realizations  # type: ignore
+
 # noinspection PyProtectedMember
 from astropy.coordinates.name_resolve import NameResolveError
+from astropy.cosmology import WMAP5, Cosmology, realizations  # type: ignore
+from dataclasses import asdict, dataclass, field, fields, replace
+from lib2to3.pgen2.token import OP
+from pathlib import Path
 from requests.exceptions import HTTPError as RequestsHTTPError
 from urllib.error import HTTPError
 
-from .utils import Number, VerbosePrinter, get_flows_sninfo, is_http_error
-from .filters import (BandsType, Filter, FilterSorter, PISCO_FILTER_PATH, SVOFilter, make_bands)
-from .sites import Sites
+from .filters import PISCO_FILTER_PATH, BandsType, Filter, FilterSorter, SVOFilter, make_bands
 from .photometry import (
-    _HasFlux,
+    ConvertsToFlux,
     HasMag,
-    Phot,
-    Photometry,
-    PhotFactory,
     ImplementsFlux,
-    ImplementsMagFlux,
     ImplementsMag,
+    ImplementsMagFlux,
+    Phot,
+    PhotFactory,
+    Photometry,
 )
+from .sites import Sites
+from .utils import Number, VerbosePrinter, get_flows_sninfo, is_http_error
 
 
 @dataclass
@@ -55,17 +57,14 @@ class SNInfo:
 
     def set_coords(self) -> None:
         def from_str(ra_s: str, dec_s: str):
-            return SkyCoord(
-                ra_s, dec_s, unit=(u.hourangle, u.deg), frame="icrs", equinox="J2000"
-            )
+            return SkyCoord(ra_s, dec_s, unit=(u.hourangle, u.deg), frame="icrs", equinox="J2000")
+
         coords = None
         if isinstance(self.ra, str) and isinstance(self.dec, str):
             coords = from_str(self.ra, self.dec)
 
         elif isinstance(self.ra, Number) and isinstance(self.dec, Number):
-            coords = SkyCoord(
-                self.ra, self.dec, unit=(u.deg, u.deg), frame="icrs", equinox="J2000"
-            )
+            coords = SkyCoord(self.ra, self.dec, unit=(u.deg, u.deg), frame="icrs", equinox="J2000")
         elif self.name.startswith("SN"):
             try:
                 coords = SkyCoord.from_name(self.name)
@@ -104,9 +103,7 @@ class SNInfo:
 
         except Exception as e:
             print(e)
-            ebv = self.query_user(
-                "Could not get E(B-V) from IRSA." " Please enter manually:"
-            )
+            ebv = self.query_user("Could not get E(B-V) from IRSA. Please enter manually:")
         self.ebv = float(ebv)
 
     def to_series(self) -> pd.Series:
@@ -133,7 +130,6 @@ class SNInfo:
 
     @classmethod
     def from_name(cls, name: str, redshift: float = 0.0, **kwargs: Any) -> "SNInfo":
-
         found = False
         coords: Optional[SkyCoord] = None
         if redshift != 0.0:
@@ -143,7 +139,7 @@ class SNInfo:
             except NameResolveError:
                 coords = None
                 print(f"Could not resolve {name} to coordinates from SkyCoord Sesame.")
-            
+
         if not found:
             try:
                 coords, redshift = get_flows_sninfo(name)
@@ -157,7 +153,7 @@ class SNInfo:
 
         if found and coords is not None:
             return cls(name, redshift=redshift, ra=coords.ra.deg, dec=coords.dec.deg, **kwargs)
-        
+
         raise ValueError(f"Could not get SNInfo for {name}.")
 
     def __setitem__(self, key, value):
@@ -183,21 +179,23 @@ def sn_factory(
 
     # SNINFO
     if isinstance(sninfo, pd.Series):
-        sninfo = SNInfo.from_dict(sninfo.to_dict())
+        sninfo_in = SNInfo.from_dict(sninfo.to_dict())
     elif isinstance(sninfo, dict):
-        sninfo = SNInfo.from_dict(sninfo)
+        sninfo_in = SNInfo.from_dict(sninfo)
+    else:
+        sninfo_in = cast(SNInfo, sninfo)  # For mypy
 
     # Phases
     if phases is None:
         phases = {}
     if isinstance(phases, dict):
-        phases = pd.Series(phases)
+        phases = pd.Series(phases, dtype='float64')
     if "phase_zero" not in phases:
-        phases["phase_zero"] = sninfo.phase_zero
+        phases["phase_zero"] = sninfo_in.phase_zero
 
     # Bands
     usebands = phot.band.unique().tolist() if bands is None else bands
-    new_bands = make_bands(usebands, ebv=sninfo.ebv)
+    new_bands = make_bands(usebands, ebv=sninfo_in.ebv)
 
     # Sites
     if sites is None:
@@ -205,8 +203,7 @@ def sn_factory(
         if len(phot) > 0:
             sites = Sites.from_list(phot.site.unique().astype(str))
 
-    return SN(phot=phot, sninfo=sninfo, limits=limits, phases=phases, bands=new_bands, sites=sites)
-
+    return SN(phot=phot, sninfo=sninfo_in, limits=limits, phases=phases, bands=new_bands, sites=sites)
 
 
 @dataclass
@@ -238,11 +235,7 @@ class SN:
         self.distance = self.sninfo.dm if self.sninfo.dm != -99 else self.distance
         self.name = self.sninfo.name
         self.sub_only = self.sninfo.sub_only
-        self.phase_zero = (
-            self.sninfo.phase_zero
-            if self.sninfo.phase_zero is not None
-            else self.phase_zero
-        )
+        self.phase_zero = self.sninfo.phase_zero if self.sninfo.phase_zero is not None else self.phase_zero
         self.redshift = self.sninfo.redshift
         self.set_phases()
 
@@ -284,9 +277,7 @@ class SN:
             phot = phot.masked(phot.site == site_id)
         if return_absmag:
             if not isinstance(phot, HasMag):
-                raise TypeError(
-                    "Photometry must be MagPhot or Phot to return absolute magnitude."
-                )
+                raise TypeError("Photometry must be MagPhot or Phot to return absolute magnitude.")
             phot.mag = phot.absmag(self.distance, self.bands[filt].ext)
         if flux:
             if isinstance(phot, ImplementsMag):
@@ -311,10 +302,10 @@ class SN:
         bands: Optional[BandsType] = None,
         band_order: Optional[list[str]] = None,
         ebv: Optional[float] = None,
-        rv: float = 3.1
+        rv: float = 3.1,
     ) -> Mapping[str, Filter]:
         """
-        Creates a sorted dictionary of Filter.name: Filter 
+        Creates a sorted dictionary of Filter.name: Filter
         (from the bands in the photometry unless new bands are passed in).
         Any unknown filters are added to the end. If band_order is given, the
         order of the bands is set to that, otherwise default_order from
@@ -363,7 +354,7 @@ class SN:
         fac = PhotFactory(sn_phot=Phot())
         for band in self.bands:
             fluxphot = self.band(band, flux=True)
-            if not isinstance(fluxphot, _HasFlux):
+            if not isinstance(fluxphot, ConvertsToFlux):
                 raise TypeError("Photometry must have mag, mag_err to calculate flux.")
             fluxphot = fluxphot.masked(fluxphot.flux.notna().tolist())
             fac.concat_phot(fluxphot)
@@ -377,13 +368,11 @@ class SN:
         redshift: float,
         phase_zero: Optional[float] = None,
         sub_only: bool = False,
-        
         limits: Optional[Photometry] = None,
         sninfo: Optional[SNInfo] = None,
         sites: Optional[Sites] = None,
         **sninfo_kwargs: Any,
     ) -> "SN":
-
         if phase_zero is None:
             if sninfo is not None:
                 if sninfo.phase_zero not in [None, -99]:
@@ -401,12 +390,9 @@ class SN:
             sninfo.name = name
             sninfo.phase_zero = phase_zero
         else:
-            sninfo = SNInfo(
-                redshift=redshift, name=name, sub_only=sub_only, phase_zero=phase_zero, **sninfo_kwargs
-            )
+            sninfo = SNInfo(redshift=redshift, name=name, sub_only=sub_only, phase_zero=phase_zero, **sninfo_kwargs)
 
         return sn_factory(phot=phot, sninfo=sninfo, limits=limits, sites=sites)
-
 
     def copy(self):
         return replace(self)
@@ -429,10 +415,8 @@ class SNSerializer:
 
         sn.sninfo["name"] = sn.name
         sn.sninfo["sub_only"] = sn.sub_only
-        field_vals = {
-            f.name: getattr(sn, f.name) for f in fields(sn) if f.name in names
-        }
- 
+        field_vals = {f.name: getattr(sn, f.name) for f in fields(sn) if f.name in names}
+
         printer.print(f"saving {sn.name} with fields:")
         for name, _field in field_vals.items():
             printer.print(name, type(_field))
@@ -451,7 +435,7 @@ class SNSerializer:
             if isinstance(_field, SNInfo):
                 _field = _field.to_series()
             save_name = f"{basepath.absolute()}/{sn.name}_{name}.csv"
-            _field.to_csv(save_name, index=True)          
+            _field.to_csv(save_name, index=True)
 
     @staticmethod
     def from_csv(dirpath: Union[str, Path]) -> SN:
@@ -462,7 +446,6 @@ class SNSerializer:
         csvs = glob.glob(str(Path(dirpath) / "*.csv"))
         if len(csvs) < 2:
             raise FileNotFoundError(f"Only found: {csvs} in {dirpath}.")
-        _sn_dict = {}
         for csv in csvs:
             df = pd.read_csv(csv, index_col=0).squeeze("columns")
             for name in names:
@@ -491,9 +474,7 @@ class SNSerializer:
 
         elif isinstance(_fields["bands"], pd.DataFrame):
             _bands_dict = _fields["bands"].to_dict("index")  # type: ignore
-            _fields["bands"] = {
-                v["name"]: Filter.from_dict(v) for v in _bands_dict.values()
-            }
+            _fields["bands"] = {v["name"]: Filter.from_dict(v) for v in _bands_dict.values()}
         else:
             _fields["bands"] = {}
         sninfo = SNInfo.from_dict(_fields["sninfo"].to_dict())
@@ -521,9 +502,7 @@ class SNSerializer:
         # )
 
     @staticmethod
-    def add_piscola_magsys(
-        name: str, mag: float = 0, file: str = "ab_sys_zps.dat", verbose: bool = True
-    ) -> None:
+    def add_piscola_magsys(name: str, mag: float = 0, file: str = "ab_sys_zps.dat", verbose: bool = True) -> None:
         """Add a new magnitude system to the Piscola mag system file."""
         printer = VerbosePrinter(verbose=verbose)
         file = str(PISCO_FILTER_PATH.parent / "mag_sys" / file)
@@ -540,10 +519,7 @@ class SNSerializer:
     def save_piscola_filters(self, sites: bool = True):
         for band in self.sn.bands.values():
             if not isinstance(band.svo, SVOFilter):
-                warnings.warn(
-                    f"Filter {band.name} does not have an SVO Filter defined."
-                    f" Skipping."
-                )
+                warnings.warn(f"Filter {band.name} does not have an SVO Filter defined. Skipping.")
                 continue
             if sites:
                 site_names = self.sn.sites.site_names
@@ -564,7 +540,7 @@ class SNSerializer:
         self.save_piscola_filters(sites=sites)
         sn = self.sn
         sn.calc_flux()
-        if not isinstance(sn.phot, _HasFlux):
+        if not isinstance(sn.phot, ConvertsToFlux):
             raise TypeError("Photometry must have fluxes to make a piscola file.")
         line0 = "name z ra dec\n"
         line1 = f"{sn.name} {sn.sninfo.redshift} {sn.sninfo.ra} {sn.sninfo.dec}"
@@ -602,10 +578,10 @@ def cosmo_from_name(name: str) -> Cosmology:
 
 
 def get_extinction_irsa(coords: SkyCoord) -> float:
-    from astroquery.irsa_dust import IrsaDust
+    from astroquery.ipac.irsa.irsa_dust import IrsaDust
 
     table = IrsaDust.get_query_table(coords, section="ebv")
-    ebv = table["ext SandF ref"][0] # type: ignore
+    ebv = table["ext SandF ref"][0]  # type: ignore
     return cast(float, ebv)
 
 
@@ -624,4 +600,3 @@ def query_skycoord(name: str) -> SkyCoord:
         warnings.warn(f"Could not resolve name {name} to a SkyCoord. {e}")
         raise e
     return coords
-    

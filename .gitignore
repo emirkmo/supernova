@@ -131,3 +131,4 @@ dmypy.json
 
 *.pyi
 astrosn/*.py,cover
+student_script

@@ -1,32 +1,25 @@
 from __future__ import annotations
-from dataclasses import dataclass, asdict, field, fields
-from typing import (
-    Any,
-    Generic,
-    Sequence,
-    TypeVar,
-    Protocol,
-    Mapping,
-    Iterable,
-    Hashable,
-    overload,
-    runtime_checkable,
-)
-import warnings
+
+from typing import Any, Generic, Hashable, Iterable, Mapping, Protocol, Sequence, TypeVar, cast, runtime_checkable
 
 import numpy as np
 import pandas as pd
-from pandas import Series, DataFrame
-#from pandera.typing import Series, DataFrame
+import warnings
+
+# from pandera.typing import Series, DataFrame
 from astropy.units import Quantity
-import astropy.units as u
+from dataclasses import asdict, dataclass, fields
+from pandas import DataFrame, Series as PandasSeries
 
 from .filters import Filter
-from .utils import Number, get_field_dtype_default, _is_quantity
+from .utils import Number, get_field_dtype_default
+
 T = TypeVar("T")
 GenericType = TypeVar("GenericType", covariant=True)
-NumType = TypeVar('NumType', float, int, Quantity)
-class Series(Series, Generic[GenericType]):
+NumType = TypeVar("NumType", float, int, Quantity)
+
+
+class Series(PandasSeries, Generic[GenericType]):
     ...
 
 
@@ -65,7 +58,7 @@ class HasFlux(Protocol):
 
 @dataclass
 @runtime_checkable
-class _HasFlux(HasFlux, Protocol):
+class ConvertsToFlux(HasFlux, Protocol):
     @staticmethod
     def mag_to_flux(mag: Series[float], filt: Filter) -> Series[float]:
         ...
@@ -77,7 +70,7 @@ class _HasFlux(HasFlux, Protocol):
 
 @dataclass
 @runtime_checkable
-class HasMagFlux(HasMag, _HasFlux, Protocol):
+class HasMagFlux(HasMag, ConvertsToFlux, Protocol):
     @classmethod
     def from_magphot(cls, magphot: HasMag, band: Filter) -> "HasMagFlux":
         ...
@@ -135,39 +128,39 @@ class PhotMethods(Protocol):
     def sorted(self) -> "Photometry":
         ...
 
+
 @runtime_checkable
 class ImplementsMag(HasPhot, HasMag, PhotMethods, Protocol):
     pass
 
+
 @runtime_checkable
-class ImplementsFlux(HasPhot, _HasFlux, PhotMethods, Protocol):
+class ImplementsFlux(HasPhot, ConvertsToFlux, PhotMethods, Protocol):
     pass
+
 
 @runtime_checkable
 class ImplementsMagFlux(HasPhot, HasMagFlux, PhotMethods, Protocol):
     pass
 
+
 @runtime_checkable
 class ImplementsLuminosity(HasPhot, HasLuminosity, PhotMethods, Protocol):
     pass
+
 
 @runtime_checkable
 class ImplementsBlackBody(HasPhot, HasBlackBody, PhotMethods, Protocol):
     pass
 
-Photometry = (
-    ImplementsMag
-    | ImplementsFlux
-    | ImplementsMagFlux
-    | ImplementsLuminosity
-    | ImplementsBlackBody
-)
 
-FluxPhotometry = ImplementsFlux | ImplementsMagFlux 
+Photometry = ImplementsMag | ImplementsFlux | ImplementsMagFlux | ImplementsLuminosity | ImplementsBlackBody
+
+FluxPhotometry = ImplementsFlux | ImplementsMagFlux
 MagPhotometry = ImplementsMag | ImplementsMagFlux
 
 
-P = TypeVar('P', bound=Photometry)
+P = TypeVar("P", bound=Photometry)
 
 
 @dataclass
@@ -182,9 +175,7 @@ class BasePhotMixin(PhotMethods, Generic[P]):
 
     def __post_init__(self) -> None:
         if 0 < len(self.filter) == len(self):
-            warnings.warn(
-                "Phot: `filter` is deprecated, use `band` instead", DeprecationWarning
-            )
+            warnings.warn("Phot: `filter` is deprecated, use `band` instead", DeprecationWarning)
             self.band = self.filter
 
         if len(self.band) != len(self):
@@ -204,7 +195,6 @@ class BasePhotMixin(PhotMethods, Generic[P]):
         if len(self) == 0:
             return
         for _field in fields(self):
-
             if len(getattr(self, _field.name)) == 0:
                 dtype, default = get_field_dtype_default(_field)
                 setattr(
@@ -224,15 +214,12 @@ class BasePhotMixin(PhotMethods, Generic[P]):
         return self.from_dict(d2)
 
     def calc_phases(self, phase_zero: float | int) -> None:
-        self.phase = self.jd - phase_zero
+        self.phase = cast(Series[float], self.jd - phase_zero)
 
     def restframe_phases(self, redshift: float | int) -> Series[float]:
         if self.phase is None:
-            raise AttributeError(
-                "self.phase must not be None, "
-                "calculate it first using calc_phases with a phase_zero"
-            )
-        return self.phase / (1 + redshift)
+            raise AttributeError("self.phase must not be None, calculate it first using calc_phases with a phase_zero")
+        return cast(Series[float], self.phase / (1 + redshift))
 
     def as_dataframe(self) -> DataFrame:
         return DataFrame(asdict(self))
@@ -246,17 +233,18 @@ class BasePhotMixin(PhotMethods, Generic[P]):
         return self.from_dict(df.to_dict("series"))
 
 
-
 class _MagMethodsMixin:
     mag: Series[float]
 
     def absmag(self, dm: N, ext: N) -> Series[N]:
-        return self.mag - dm - ext
+        return cast(Series[N], self.mag - dm - ext)
+
 
 @dataclass
 class MagMixin:
     mag: Series[float] = Series(dtype=float)
     mag_err: Series[float] = Series(dtype=float)
+
 
 @dataclass
 class MagPhot(BasePhotMixin[ImplementsMag], MagMixin, _MagMethodsMixin, ImplementsMag):
@@ -264,19 +252,20 @@ class MagPhot(BasePhotMixin[ImplementsMag], MagMixin, _MagMethodsMixin, Implemen
 
 
 class _FluxMethodsMixin:
-    
     @staticmethod
     def mag_to_flux(mag: Series[float], filt: Filter) -> Series[float]:
-        return 10 ** (mag / -2.5) * filt.zp
+        return cast(Series[float], 10 ** (mag / -2.5) * filt.zp)
 
     @staticmethod
     def mag_to_flux_err(mag_err: Series[float], flux: Series[float]) -> Series[float]:
-        return 2.303 * mag_err * flux
+        return cast(Series[float], 2.303 * mag_err * flux)
+
 
 @dataclass
 class FluxMixin:
     flux: Series[float] = Series(dtype=float)
     flux_err: Series[float] = Series(dtype=float)
+
 
 @dataclass
 class FluxPhot(BasePhotMixin[ImplementsFlux], FluxMixin, _FluxMethodsMixin, ImplementsFlux):
@@ -284,9 +273,16 @@ class FluxPhot(BasePhotMixin[ImplementsFlux], FluxMixin, _FluxMethodsMixin, Impl
 
 
 @dataclass
-class Phot(BasePhotMixin[ImplementsMagFlux], MagMixin, FluxMixin, _MagMethodsMixin, _FluxMethodsMixin, ImplementsMagFlux, ImplementsFlux, ImplementsMag):
-
-
+class Phot(
+    BasePhotMixin[ImplementsMagFlux],
+    MagMixin,
+    FluxMixin,
+    _MagMethodsMixin,
+    _FluxMethodsMixin,
+    ImplementsMagFlux,
+    ImplementsFlux,
+    ImplementsMag,
+):
     @classmethod
     def from_magphot(cls, magphot: HasMag, band: Filter) -> ImplementsMagFlux:
         flux = cls.mag_to_flux(magphot.mag, band)
@@ -295,14 +291,17 @@ class Phot(BasePhotMixin[ImplementsMagFlux], MagMixin, FluxMixin, _MagMethodsMix
         fluxdict = {"flux": flux, "flux_err": flux_err}
         return cls.from_dict(magdict | fluxdict)
 
+
 @dataclass
 class LumMixin:
     lum: Series[float] = Series(dtype=float)
     lum_err: Series[float] = Series(dtype=float)
 
+
 @dataclass
 class LumPhot(BasePhotMixin[ImplementsLuminosity], LumMixin, FluxMixin, ImplementsLuminosity, HasLumFlux):
     pass
+
 
 @dataclass
 class BBLumPhot(BasePhotMixin[ImplementsBlackBody], LumMixin, FluxMixin, ImplementsBlackBody, HasBlackBodyFlux):
@@ -322,7 +321,8 @@ class PhotFactory:
 
     @staticmethod
     def from_df(df: DataFrame) -> Photometry:
-        #d = cast(Mapping[str, Series], df.to_dict("series"))
+        # Big fucking switch statement... replace with polymorphism?
+        # d = cast(Mapping[str, Series], df.to_dict("series"))
         d = df.to_dict("series")
         mag = "mag" in d
         flux = "flux" in d
@@ -345,9 +345,7 @@ class PhotFactory:
         """
         Add photometry to a Supernova.
         """
-        df = pd.concat(
-            [sn_phot.as_dataframe(), new_phot.as_dataframe()], ignore_index=True
-        )
+        df = pd.concat([sn_phot.as_dataframe(), new_phot.as_dataframe()], ignore_index=True)
         df = df[sn_phot.as_dataframe().columns.drop("filter")]
         return cls.from_df(df)
 
