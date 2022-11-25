@@ -2,18 +2,17 @@ name: Python tests
 
 on:
   push:
-    branches: ["master"]
+    branches: ["main"]
   pull_request:
-    branches: ["master"]
+    branches: ["main"]
   pull_request_target:
-    branches: ["master"]
+    branches: ["main"]
 
 permissions: write-all
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python 3.10
@@ -37,7 +36,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FLOWS_TOKEN: ${{ secrets.FLOWS_API_TOKEN }}
-
       - name: Test with pytest
         run: |
           python -m pytest
