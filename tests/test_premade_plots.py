@@ -47,7 +47,7 @@ def test_unit_flows_plot(sn: SN) -> None:
 
     assert isinstance(fig, Figure)
     assert isinstance(ax, Axes)
-    assert len(labels) == 19
+    assert len(labels) == 16
     assert len(handles) == len(labels)
 
     # bands in legend
