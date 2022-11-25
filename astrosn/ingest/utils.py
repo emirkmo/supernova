@@ -1,11 +1,15 @@
-from pathlib import Path
+from typing import Any, Callable, Optional, Sequence, Type
+
 import pandas as pd
-from astrosn.supernova import SN, SNSerializer
+from pathlib import Path
+
 from astrosn.photometry import PhotFactory, Photometry
-from typing import Sequence, Optional, Type, Callable
-from .readers import PathType, resolve_path, PhotReader
+from astrosn.supernova import SN, SNSerializer
+
 from .converters import Converter
-NEEDED_KEYS = 'site,band,mag,mag_err,jd,sub'.split(',')
+from .readers import PathType, PhotReader, resolve_path
+
+NEEDED_KEYS = "site,band,mag,mag_err,jd,sub".split(",")
 Collator = Callable[[PathType], Photometry]
 
 
@@ -19,9 +23,9 @@ def collate_phot(path: PathType, converter: Type[Converter], reader: PhotReader)
 add_phot = PhotFactory.add_phot
 
 
-def create_sn(name: str, dir_path: PathType, collator: Collator,
-              redshift: float = 0, phase_zero: float = 0,
-              save_sn: bool = True) -> SN:
+def create_sn(
+    name: str, dir_path: PathType, collator: Collator, redshift: float = 0, phase_zero: float = 0, save_sn: bool = True
+) -> SN:
     """
     Create a Supernova object from a directory of photometry files,
     optionally saving it to the parent directory.
@@ -46,7 +50,8 @@ def update_sn(sn: SN, phot: Photometry) -> SN:
     return sn
 
 
-def verify_columns(df: pd.DataFrame, keys: Optional[Sequence['str']] = None) -> bool:
+def verify_columns(df: pd.DataFrame, keys: Optional[Sequence["str"]] = None) -> bool:
     if keys is None:
         keys = NEEDED_KEYS
     return set(keys) - set(df.columns) == set()
+

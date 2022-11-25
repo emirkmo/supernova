@@ -3,8 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from .converters import Converter, GenericCSVConverter, GenericECSVConverter
-from .readers import (PathType, resolve_path, PhotReader, read_pandas_csv,
-                      read_astropy_table_as_df_with_times_as_jd)
+from .readers import PathType, resolve_path, PhotReader, read_pandas_csv, read_astropy_table_as_df_with_times_as_jd
 from .utils import NEEDED_KEYS
 from astrosn.photometry import Photometry, PhotFactory
 
@@ -12,14 +11,13 @@ CollatorType = Callable[[PathType], Photometry]
 
 
 class AbstractCollator(Protocol):
-    path: PathType = 'Unset'  # last processed path.
+    path: PathType = "Unset"  # last processed path.
     converter: Type[Converter]
     reader: PhotReader
     processed_files: list[PathType]  # all processed files.
     ignore: bool = True
 
-    def __init__(self, converter: Type[Converter],
-                 reader: PhotReader, ignore_processed: bool = True) -> None:
+    def __init__(self, converter: Type[Converter], reader: PhotReader, ignore_processed: bool = True) -> None:
         raise NotImplementedError("This is an abstract Protocol class.")
 
     def __call__(self, path: PathType) -> Photometry:
@@ -33,9 +31,7 @@ class AbstractCollator(Protocol):
 
 
 class Collator(AbstractCollator):
-
-    def __init__(self, converter: Type[Converter],
-                 reader: PhotReader, ignore_processed: bool = True) -> None:
+    def __init__(self, converter: Type[Converter], reader: PhotReader, ignore_processed: bool = True) -> None:
         self.path = "Unset"
         self.converter = converter
         self.reader = reader
@@ -66,4 +62,3 @@ class Collator(AbstractCollator):
 collate_ecsv = Collator(GenericECSVConverter, read_astropy_table_as_df_with_times_as_jd)
 collate_csv = Collator(GenericCSVConverter, read_pandas_csv)
 collate_json = Collator(GenericECSVConverter, pd.read_json)
-

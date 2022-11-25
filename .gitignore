@@ -130,3 +130,5 @@ dmypy.json
 .vscode/
 
 *.pyi
+astrosn/*.py,cover
+student_script

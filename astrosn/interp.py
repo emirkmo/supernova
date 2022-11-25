@@ -1,17 +1,17 @@
-import importlib
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Mapping, Optional, Protocol, cast
 
 import astropy.units as u
+import importlib
 import numpy as np
 import pandas as pd
 import piscola
-from numpy.typing import NDArray
 from numpy._typing import _ArrayLike as ArrayLike
+from numpy.typing import NDArray
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from .filters import FLAM, Filter, MagSys, SVOFilter, zero_point_flux
-from .photometry import FluxPhotometry, MagPhotometry, Phot, PhotFactory, Photometry
+from .photometry import FluxPhotometry, HasFlux, HasMag, MagPhotometry, Phot, PhotFactory, Photometry, SeriesSite
 from .sites import Sites
 from .supernova import SN, SNSerializer
 from .utils import Number, QuantityArrayType, quantity_array
@@ -58,9 +58,7 @@ class PiscolaInterp:
         """Make a DataFrame from a Piscola light curve."""
         dfs = []
         for band in lc.bands:
-            df = pd.DataFrame(
-                {colname: lc[band][colname] for colname in self.piscola_names}
-            )
+            df = pd.DataFrame({colname: lc[band][colname] for colname in self.piscola_names})
             zp_corr = init_lcs[band].zp
             df = self._fix_zp(df, zp_corr)
             dfs.append(df)
@@ -92,28 +90,25 @@ class PiscolaInterp:
 
 
 class LCInterp:
-    def __init__(
-        self, reference_times: ArrayLike, phot: Photometry, band: Filter
-    ) -> None:
+    def __init__(self, reference_times: ArrayLike, phot: Photometry, band: Filter) -> None:
         self._time = phot.jd
         self.reference_times = reference_times
         self.band = band
         self.svo_filter = band.svo
         self._phot = phot
 
-        if not isinstance(phot, MagPhotometry):
+        if not isinstance(phot, HasMag):
             raise TypeError("Photometry must have `mag` and `mag_err`.")
+        # assert isinstance(phot, MagPhotometry)
         self._mag = self.interp(phot.mag)
         self._mag_err = self.interp(phot.mag_err)
 
-        if isinstance(phot, FluxPhotometry):
+        if isinstance(phot, HasFlux):
             self._flux = self.interp(phot.flux)
             self._flux_err = self.interp(phot.flux_err)
         else:
             if self.svo_filter is None:
-                raise ValueError(
-                    "Photometry must have `flux` and `flux_err` if `svo_filter` is not set."
-                )
+                raise ValueError("Photometry must have `flux` and `flux_err` if `svo_filter` is not set.")
             self._flux = mag_to_flux(self.mag, self.svo_filter, magsys=self.band.magsys)
             self._flux_err = mag_to_flux_err(self._mag_err, self.flux)
 
@@ -166,16 +161,14 @@ class SNInterp:
         self.interp: GPInterp = interp_type(sn)
         self._sitemap = self.sn.sites.sites
 
-    def update_sitemap(
-        self, phot: Photometry | pd.DataFrame
-    ) -> Photometry | pd.DataFrame:
+    def update_sitemap(self, phot: Photometry | pd.DataFrame) -> Photometry | pd.DataFrame:
         new_sites = phot.site.unique()
         sites = Sites(sites=self._sitemap)
         for site in new_sites:
             if site not in sites:
                 new_site = sites.add_site(name=site)
                 self._sitemap[new_site.id] = new_site
-        phot.site = cast(pd.Series, phot.site.apply(lambda x: sites[x].id))
+        phot.site = cast(SeriesSite, phot.site.apply(lambda x: sites[x].id))
         sites = Sites(sites=self._sitemap.copy())
         for site in self._sitemap.values():
             if site.name not in new_sites:
@@ -186,7 +179,7 @@ class SNInterp:
     def _fix_df_for_phot(self, df: pd.DataFrame) -> pd.DataFrame:
         df["sub"] = True
         p0 = self.sn.phase_zero if self.sn.phase_zero is not None else df["jd"].iloc[0]
-        df["phase"] = df['jd'] - p0
+        df["phase"] = df["jd"] - p0
         return df
 
     def gp_interp(self) -> Photometry:
@@ -223,9 +216,7 @@ class SNInterp:
         )
 
 
-def mag_to_flux(
-    mag: QuantityArrayType, filt: SVOFilter, magsys=MagSys.AB
-) -> u.Quantity:
+def mag_to_flux(mag: QuantityArrayType, filt: SVOFilter, magsys=MagSys.AB) -> u.Quantity:
     qmag = quantity_array(mag)
     if magsys == "AB":
         qmag = qmag << u.ABmag

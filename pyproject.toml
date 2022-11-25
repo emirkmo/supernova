@@ -42,7 +42,97 @@ Home = "https://github.com/emirkmo/supernova"
 test = [
     "pytest >=2.7.3",
     "pytest-cov",
+    "pytest-mpl",
+    "flake8",
+    "black",
+    "isort",
+    "pre-commit",
+    "sphinx",
+    "mypy",
 ]
 flows = [
     "tendrils"
 ]
+
+[tool.black]
+line-length = 120
+target-version = ['py310']
+preview = true
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.idea
+  | \.mypy_cache
+  | \.pytest_cache
+  | buck-out
+  | build
+  | dist
+  | SN2020lao
+  | README.md
+  | LICENSE
+  | htmlcov
+)/
+'''
+
+[tool.isort]
+profile = "black"
+known_first_party = "astrosn"
+known_third_party = "astropy,corner,dust_extinction,emcee,lmfit,matplotlib,numpy,pandas,pytest,requests,seaborn,specutils,tqdm"
+known_standard_library = "contextlib,functools,inspect,os,sys,time,typing"
+sections = "FUTURE,STDLIB,THIRDPARTY,FIRSTPARTY,LOCALFOLDER"
+line_length = 120
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+combine_as_imports = true
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.pytest.ini_options]
+addopts = "--cov=astrosn --cov-report=term-missing --cov-report=html"
+python_files = "test_*.py"
+testpaths = "tests"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning",
+    "ignore::RuntimeWarning",
+]
+
+[tool.mypy]
+implicit_reexport = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = [
+    'astroquery.logger',
+    'astropy.*',
+    'mpl_toolkits.*',
+    'erfa.*',
+    'matplotlib.colors.*',
+    'matplotlib.ticker.*',
+    'matplotlib.transforms.*',
+    'matplotlib._mathtext.*',
+    'matplotlib.layout_engine.*',
+    'matplotlib.text.*',
+    'matplotlib.textpath.*',
+    'matplotlib.image.*',
+    'matplotlib.patches.*',
+    'matplotlib.offsetbox.*',
+    'matplotlib.legend.*',
+    'seaborn.*',
+    'tendrils.*',
+    'tqdm.*',
+    'svo_filters.*',
+    'astroquery.*',
+    'specutils.*',
+    'piscola.*',
+    'dust_extinction.*',
+]
+ignore_missing_imports = true
+ignore_errors = true
+allow_untyped_globals = true
+implicit_reexport = true

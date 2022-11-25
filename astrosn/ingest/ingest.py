@@ -1,17 +1,19 @@
+from contextlib import contextmanager
+from typing import Any, Generator, Mapping, Optional
+
+from enum import Enum
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from astrosn.photometry import Photometry
+from astrosn.sites import SiteDict, Sites, concat_lcogt, flows_sites
+from astrosn.supernova import SN, SNInfo
+
+from .collators import AbstractCollator, collate_csv, collate_ecsv, collate_json
 from .flows import collate_flows
 from .readers import PathType
-from .ztf import collate_ztf_flows, collate_ztfphot, collate_ztfphot_limits
 from .utils import add_phot
-from .collators import AbstractCollator, collate_ecsv, collate_csv, collate_json
-from astrosn.supernova import SN, SNInfo
-from astrosn.photometry import Photometry
-from astrosn.sites import Sites, flows_sites, SiteDict
-from enum import Enum
-from typing import Generator, Mapping, Optional, Any
-from tempfile import TemporaryDirectory
-from contextlib import contextmanager
-
+from .ztf import collate_ztf_flows, collate_ztfphot, collate_ztfphot_limits
 
 PREDEFINED_COLLATORS = {
     "flows": collate_flows,
@@ -57,7 +59,6 @@ class DataIngestor:
         self.sninfo_kwargs = sninfo_kwargs
 
     def setup(self) -> None:
-
         """
         Setup the data ingestor
         """
@@ -125,16 +126,13 @@ class DataIngestor:
                 lims = []
             if len(phots) == 0:
                 raise FileNotFoundError(
-                    f"No photometry found in {self.path}."
-                    f"With defined data collators: {self.collators}"
+                    f"No photometry found in {self.path}.With defined data collators: {self.collators}"
                 )
 
             phot = phots[0]
             sites = None
             if self.sitemap:
-                sites = Sites.from_sitemap(
-                    {s: self.sitemap.get(s, str(s)) for s in phot.site.unique()}
-                )
+                sites = Sites.from_sitemap({s: self.sitemap.get(s, str(s)) for s in phot.site.unique()})
 
             phot = phot.sorted()
             return SN.from_phot(
@@ -213,9 +211,12 @@ class FlowsIngest(DataIngestor):
         collators = PREDEFINED_COLLATORS
         limits_collators = PREDEFINED_LIMITS_COLLATORS
 
-        super().__init__(
-            path, collators, limits_collators, sninfo, sitemap, **sninfo_kwargs
-        )
+        super().__init__(path, collators, limits_collators, sninfo, sitemap, **sninfo_kwargs)
+
+    def load_sn(self) -> SN:
+        sn: SN = super().load_sn()
+        concat_lcogt(sn.sites, sn.phot)  # Replace LCOGT XX with single site.
+        return sn
 
 
 class ZTFIngest(DataIngestor):
@@ -223,14 +224,12 @@ class ZTFIngest(DataIngestor):
         self,
         path: PathType,
         sninfo: Optional[SNInfo] = None,
-        sitemap: Optional[SiteDict] = {0 : "ZTF"},
+        sitemap: Optional[SiteDict] = {0: "ZTF"},
         **sninfo_kwargs: Any,
     ) -> None:
-        collators = {"ztf": collate_ztf_flows, 'ztfphot': collate_ztfphot}
+        collators = {"ztf": collate_ztf_flows, "ztfphot": collate_ztfphot}
         limits_collators = None
-        super().__init__(
-            path, collators, limits_collators, sninfo, sitemap, **sninfo_kwargs
-        )
+        super().__init__(path, collators, limits_collators, sninfo, sitemap, **sninfo_kwargs)
 
 
 class Ingestors(Enum):
@@ -282,11 +281,8 @@ def ingest_sn(
     if isinstance(redshift, str):
         redshift = float(redshift)  # try to convert to float
     if not isinstance(redshift, float):
-        raise TypeError(
-            f"redshift must be a float or a string that can be converted to a float. Got {redshift}."
-        )
-    #if redshift == 0.0:
-        
+        raise TypeError(f"redshift must be a float or a string that can be converted to a float. Got {redshift}.")
+    # if redshift == 0.0:
 
     if sninfo is None:
         sninfo = SNInfo.from_name(snname, redshift=redshift, **sninfo_kwargs)

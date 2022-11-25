@@ -1,4 +1,4 @@
-from typing import Iterator, Optional
+from typing import Iterator, Optional, cast
 import seaborn as sns
 
 DEFAULT_COLORS = {
@@ -18,12 +18,12 @@ DEFAULT_COLORS = {
     "K": "coral",
 }
 
-GENERIC_COLORS = sns.color_palette()
 
 ColorType = str | tuple[float, float, float]
-ColorIterable = (
-    dict[str, str] | dict[str, ColorType] | list[ColorType] | sns.palettes._ColorPalette 
-)
+ColorIterable = dict[str, str] | dict[str, ColorType] | list[ColorType] | sns.palettes._ColorPalette
+
+
+GENERIC_COLORS = cast(list[ColorType], sns.color_palette())
 
 
 class Color:
@@ -32,9 +32,7 @@ class Color:
         self._color_iter = self._set_color_iter()
 
     def _set_color_iter(self) -> Iterator[ColorType]:
-        return iter(
-            self.colors.values() if isinstance(self.colors, dict) else self.colors
-        )
+        return iter(self.colors.values() if isinstance(self.colors, dict) else self.colors)
 
     def _refresh_color_iter(self) -> None:
         self._color_iter = self._set_color_iter()
