@@ -146,6 +146,7 @@ def get_flows_sites() -> SiteDict:
         flows_sites = cast(SiteDict, {s["siteid"]: s["sitename"] for s in sites})
         flows_sites[1] = "LCOGT"
         flows_sites[0] = "ZTF"
+        flows_sites[8] = "LT"
     except ImportError:
         warnings.warn("tendrils_api not found, using default flows_sites")
 
